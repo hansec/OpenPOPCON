@@ -58,7 +58,7 @@ def read_eqdsk(filename):
             eqdsk_obj[key] = read_1d(fid, eqdsk_obj['nr'])
         # Read PSI grid
         eqdsk_obj['psirz'] = read_2d(fid, eqdsk_obj['nz'],
-                                        eqdsk_obj['nr'])
+                                     eqdsk_obj['nr'])
         # Read q-profile
         eqdsk_obj['qpsi'] = read_1d(fid, eqdsk_obj['nr'])
         # Read limiter count
@@ -71,7 +71,8 @@ def read_eqdsk(filename):
         eqdsk_obj['rzlim'] = read_2d(fid, eqdsk_obj['nlim'], 2)
     return eqdsk_obj
 
-def get_fluxvolumes(gEQDSK: dict, Npsi:int=50, nres:int=300):
+
+def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     """
     Calculates the flux surface volumes from the gEQDSK object.
 
@@ -84,22 +85,22 @@ def get_fluxvolumes(gEQDSK: dict, Npsi:int=50, nres:int=300):
     nres : int, optional
         Number of resolution points. The default is 300.
     """
-    rs = np.linspace(gEQDSK['rleft'], 
-                     gEQDSK['rleft'] + gEQDSK['rdim'], 
+    rs = np.linspace(gEQDSK['rleft'],
+                     gEQDSK['rleft'] + gEQDSK['rdim'],
                      gEQDSK['nr'])
-    zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2, 
-                     gEQDSK['zmid'] + gEQDSK['zdim']/2, 
+    zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
+                     gEQDSK['zmid'] + gEQDSK['zdim']/2,
                      gEQDSK['nz'])
 
     # Get and normalize fluxes
     fluxes = gEQDSK['psirz'] - gEQDSK['psibry']
-    fluxes/= np.max(fluxes)
+    fluxes /= np.max(fluxes)
     if gEQDSK['psibry'] < gEQDSK['psimag']:
         fluxes = 1-fluxes
 
     cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
     allsegs = []
-    psin = np.linspace(0,1,Npsi)**2
+    psin = np.linspace(0, 1, Npsi)**2
     for level in psin:
         allsegs.append(cgen.create_contour(level))
 
@@ -108,18 +109,20 @@ def get_fluxvolumes(gEQDSK: dict, Npsi:int=50, nres:int=300):
     for segset in allsegs:
         true = []
         for i in range(len(segset)):
-            if np.abs(np.sqrt( (np.average(segset[i][:,1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:,0])-gEQDSK['raxis'])**2 ) ) < gEQDSK['zdim']/5:
+            if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
                 true.append(i)
         if len(true) == 0:
             raise ValueError('No true path found')
         for truei in true:
             closed_fluxsurfaces.append(segset[truei])
 
-    h = closed_fluxsurfaces[-1][:,1].max() - closed_fluxsurfaces[-1][:,1].min()
+    h = closed_fluxsurfaces[-1][:, 1].max() - \
+        closed_fluxsurfaces[-1][:, 1].min()
     dh_target = h/nres
 
     # Get flux surface volumes
-    hs = np.linspace(closed_fluxsurfaces[-1][:,1].min()+dh_target, closed_fluxsurfaces[-1][:,1].max()-dh_target, nres)
+    hs = np.linspace(closed_fluxsurfaces[-1][:, 1].min()+dh_target,
+                     closed_fluxsurfaces[-1][:, 1].max()-dh_target, nres)
     dh = hs[1] - hs[0]
     Volgrid = np.zeros(len(closed_fluxsurfaces))
 
@@ -133,7 +136,8 @@ def get_fluxvolumes(gEQDSK: dict, Npsi:int=50, nres:int=300):
             for j in range(len(contour)-1):
                 if (hs[i] - contour[j][1])*(hs[i] - contour[j+1][1]) < 0:
                     # interpolate to find the x value
-                    x = contour[j][0] + (hs[i] - contour[j][1])*(contour[j+1][0] - contour[j][0])/(contour[j+1][1] - contour[j][1])
+                    x = contour[j][0] + (hs[i] - contour[j][1])*(contour[j+1]
+                                                                 [0] - contour[j][0])/(contour[j+1][1] - contour[j][1])
                     xs[k] = x
                     k += 1
             if k != 2:
@@ -147,56 +151,78 @@ def get_fluxvolumes(gEQDSK: dict, Npsi:int=50, nres:int=300):
         # Trapezoidal sum, assuming small dr
         V = 0
         # Bottom cap
-        V += 0.5*np.pi*dh* ( xouters[0]**2 - xinners[0]**2 )
+        V += 0.5*np.pi*dh * (xouters[0]**2 - xinners[0]**2)
         # Middle
         for i in range(nres-1):
-            V += np.pi*dh* ( xouters[i]**2 + 0.5*(xouters[i+1]**2 - xouters[i]**2) ) - np.pi*dh* ( xinners[i]**2 + 0.5*(xinners[i+1]**2 - xinners[i]**2) )
+            V += np.pi*dh * (xouters[i]**2 + 0.5*(xouters[i+1]**2 - xouters[i]**2)) - \
+                np.pi*dh * (xinners[i]**2 + 0.5 *
+                            (xinners[i+1]**2 - xinners[i]**2))
         # Top cap
-        V += 0.5*np.pi*dh* ( xouters[-1]**2 - xinners[-1]**2 )
+        V += 0.5*np.pi*dh * (xouters[-1]**2 - xinners[-1]**2)
         Volgrid[icontour] = V
-    
+
     return psin, Volgrid
+
 
 @nb.njit
 def get_n_GR(Ip: float, a: float) -> float:
     return Ip/(np.pi*a**2)
 
-@nb.njit
-def get_Zeff(impfrac:float, imcharg:float, fHe:float, dil:float) -> float: #TODO: Arbitrary set of impurities
-    return ( (1-impfrac-fHe) + impfrac*imcharg**2 + 4*fHe)*dil
 
 @nb.njit
-def get_q_a(a:float, B0:float, kappa:float, R:float, Ip:float) -> float: #TODO: Update with Kikuchi eq?
+# TODO: Arbitrary set of impurities
+def get_Zeff(impfrac: float, imcharg: float, fHe: float, dil: float) -> float:
+    return ((1-impfrac-fHe) + impfrac*imcharg**2 + 4*fHe)*dil
+
+
+@nb.njit
+# TODO: Update with Kikuchi eq?
+def get_q_a(a: float, B0: float, kappa: float, R: float, Ip: float) -> float:
     return 2*np.pi*a**2*B0*(kappa**2+1)/(2*R*const.mu_0*Ip*10**6)
 
+
 @nb.njit
-def get_Cspitz(Zeff:float, Ip:float, q_a:float, a:float, kappa:float, volavgcurr:float) -> float:
-    Fz    = (1+1.198*Zeff + 0.222*Zeff**2)/(1+2.966*Zeff + 0.753*Zeff**2)
-    eta1  = 1.03e-4*Zeff*Fz
+def get_Cspitz(Zeff: float, Ip: float, q_a: float, a: float, kappa: float, volavgcurr: float) -> float:
+    Fz = (1+1.198*Zeff + 0.222*Zeff**2)/(1+2.966*Zeff + 0.753*Zeff**2)
+    eta1 = 1.03e-4*Zeff*Fz
     j0avg = Ip/(np.pi*a**2*kappa)*1.0e6
     if (volavgcurr == True):
         Cspitz = eta1*q_a*j0avg**2
     else:
         Cspitz = eta1
-    Cspitz /= 1.6e-16*1.0e20 #unit conversion to keV 10^20 m^-3
+    Cspitz /= 1.6e-16*1.0e20  # unit conversion to keV 10^20 m^-3
     return Cspitz
 
+
 @nb.njit
-def get_plasma_dilution(impfrac:float, imcharg:float, fHe:float) -> float:
+def get_plasma_dilution(impfrac: float, imcharg: float, fHe: float) -> float:
     return 1/(1 + impfrac*imcharg + 2*fHe)
 
+
 @nb.njit
-def get_P_LH_threshold(n20:float, bs:float) -> float: #TODO: Update with Oak paper?
+def get_P_LH_threshold(n20: float, bs: float) -> float:  # TODO: Update with Oak paper?
     return 0.049*n20**(0.72)*bs
 
+
 @nb.njit
-def get_bs_factor(B0:float, R:float, a:float, kappa:float) -> float:
+def get_bs_factor(B0: float, R: float, a: float, kappa: float) -> float:
     return B0**(0.8)*(2.*np.pi*R * 2*np.pi*a * np.sqrt((kappa**2+1)/2))**(0.94)
 
-@nb.njit
-def get_plasma_vol(a:float, R:float, kappa:float) -> float: #TODO: Update with Kikuchi eq?
-    return 2.*np.pi**2*a**2*R*kappa
 
 @nb.njit
-def get_plasma_dvolfac(a:float, R:float, kappa:float) -> float: #TODO: Update with Kikuchi eq?
+# TODO: Update with Kikuchi eq?
+def get_plasma_0d_vol(a: float, R: float, kappa: float) -> float:
+    """
+    Volume of the plasma when a gEQDSK is unavailable.
+    """
+    return 2.*np.pi**2*a**2*R*kappa
+
+
+@nb.njit
+# TODO: Update with Kikuchi eq?
+def get_plasma_0d_dvolfac(a: float, R: float, kappa: float) -> float:
+    """
+    Jacobian factor for the volume integral when a gEQDSK is 
+    unavailable.
+    """
     return 4*np.pi**2*a**2*R*kappa
