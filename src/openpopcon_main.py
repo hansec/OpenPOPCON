@@ -21,67 +21,93 @@ from openpopcon_util import *
 import numba as nb
 
 
+@nb.experimental.jitclass(spec = [
+            ('R', nb.float64), 
+            ('a', nb.float64),
+            ('kappa', nb.float64),
+            ('B0', nb.float64),
+            ('Ip', nb.float64),
+            ('q_a', nb.float64),
+            ('H', nb.float64),
+            ('M_i', nb.float64),
+            ('fHe', nb.float64),
+            ('f_LH', nb.float64),
+            ('volgrid', nb.float64[:]),
+            ('sqrtpsin', nb.float64[:]),
+            ('impurityfractions', nb.float64[:]),
+            ('extprof', nb.boolean),
+            ('profsdefined', nb.boolean),
+            ('alpha1', nb.float64),
+            ('alpha2', nb.float64),
+            ('offset', nb.float64),
+            ('extprofr', nb.float64[:]),
+            ('extprofvals', nb.float64[:])
+          ]) # type: ignore
 class POPCON_params:
     """
     Physical parameters for the POPCON.
     """
-    R: float
-    "Major radius [m]"
-    a: float
-    "Minor radius [m]"
-    kappa: float
-    "Plasma elongation []"
-    B0: float
-    "Magnetic field at the magnetic axis [T]"
-    Ip: float
-    "Plasma current [MA]"
-    q_a: float
-    "Edge safety factor []"
-    H: float
-    "Assumed H factor relative to chosen scaling law []"
-    M_i: float
-    "Ion mass [AMU]"
-    fHe: float
-    "Ash fraction []"
-    impurities: set[tuple[str, float]]
-    "Set of impurities and their fractions"
-    f_LH: float
-    "Target LH fraction f_LH = P_sol / P_tot"
-    volgrid: np.ndarray
-    "Volume grid for flux surfaces"
-    sqrtpsin: np.ndarray
-    "Square root of poloidal flux ~ radial coordinate"
-
-    def __init__(self,
-                 filename: str,
-                 machinename: str = 'NEWDEVICE',
-                 ) -> None:
-        self.machinename = machinename
-        self.read(filename)
+    def __init__(self) -> None:
+        self.R: float = 2.7
+        "Major radius [m]"
+        self.a: float
+        "Minor radius [m]"
+        self.kappa: float
+        "Plasma elongation []"
+        self.B0: float
+        "Magnetic field at the magnetic axis [T]"
+        self.Ip: float
+        "Plasma current [MA]"
+        self.q_a: float
+        "Edge safety factor []"
+        self.H: float
+        "Assumed H factor relative to chosen scaling law []"
+        self.M_i: float
+        "Ion mass [AMU]"
+        self.fHe: float
+        "Ash fraction []"
+        self.f_LH: float
+        "Target LH fraction f_LH = P_sol / P_tot"
+        self.volgrid = np.empty(0,dtype=np.float64)
+        "Volume grid for flux surfaces"
+        self.sqrtpsin = np.empty(0, dtype=np.float64)
+        "Square root of poloidal flux ~ radial coordinate"
+        # 0 = He, 1 = Ne, 2 = Ar, 3 = Kr, 4 = Xe, 5 = W
+        self.impurityfractions = np.empty(6, dtype=np.float64)
+        "Respective impurity fractions"
+        self.extprof: bool
+        self.profsdefined: bool = False
+        self.alpha1: float
+        self.alpha2: float
+        self.offset: float
+        self.extprofr = np.empty(0,dtype=np.float64)
+        self.extprofvals = np.empty(0,dtype=np.float64)
         pass
-
-    def read(self, filename: str) -> None:
-        if filename.endswith('.yaml') or filename.endswith('.yml'):
-            with open(filename, 'r') as f:
-                data = yaml.safe_load(f)
+    
+    def _addextprof(self, extprofr, extprofvals):
+        if not self.profsdefined:
+            self.extprof = True
+            self.profsdefined = True
+            self.extprofr = extprofr
+            self.extprofvals = extprofvals
         else:
-            raise ValueError('Filename must end with .yaml or .yml')
-
-        try:
-            self.R = float(data['R'])
-            self.a = float(data['a'])
-            self.kappa = float(data['kappa'])
-            self.B0 = float(data['B0'])
-            self.Ip = float(data['Ip'])
-            self.q_a = float(data['q_a'])
-            self.H = float(data['H'])
-            self.M_i = float(data['M_i'])
-            self.fHe = float(data['fHe'])
-            self.impurities = set(data['impurities'])
-            self.f_LH = float(data['f_LH'])
-        except KeyError as e:
-            raise KeyError(f'Key {e} not found in {filename}')
-        pass
+            raise SyntaxError("Profile already defined. Create a new object.")
+        
+    def _set_alpha_and_offset(self, alpha1, alpha2, offset):
+        self.extprof = False
+        self.profsdefined = True
+        self.alpha1 = alpha1
+        self.alpha2 = alpha2
+        self.offset = offset
+    
+    def get_prof_val(self, r, v0):
+        if self.extprof:
+            return v0*np.interp(r,self.extprofr,self.extprofvals)
+        else:
+            return (v0-self.offset)*(1-r**self.alpha1)**self.alpha2+self.offset
+    
+    def etaext(self) -> float:
+        return get_eta(self.R)
 
 
 class POPCON_settings:
@@ -158,49 +184,6 @@ class POPCON_settings:
             self.profiles_f = data['profiles']
         pass
 
-@nb.experimental.jitclass(spec=[('extprof', nb.boolean),
-            ('defined', nb.boolean),
-            ('alpha1', nb.float64),
-            ('alpha2', nb.float64),
-            ('offset', nb.float64),
-            ('extprofr', nb.float64[:]),
-            ('extprofvals', nb.float64[:])
-          ]) # type: ignore
-class POPCON_profile: #TODO: Should probably split this into two classes
-    def __init__(self) -> None:
-        self.extprof: bool
-        self.defined: bool = False
-        
-        # Parabolic parameters
-        self.alpha1: float
-        self.alpha2: float
-        self.offset: float
-
-        # External profile
-        self.extprofr = np.empty(0,dtype=np.float64) # Normalized radius
-        self.extprofvals = np.empty(0,dtype=np.float64)
-
-    def _addextprof(self, extprofr, extprofvals):
-        if not self.defined:
-            self.extprof = True
-            self.defined = True
-            self.extprofr = extprofr
-            self.extprofvals = extprofvals
-        else:
-            raise SyntaxError("Profile already defined. Create a new object.")
-        
-    def _set_alpha_and_offset(self, alpha1, alpha2, offset):
-        self.extprof = False
-        self.defined = True
-        self.alpha1 = alpha1
-        self.alpha2 = alpha2
-        self.offset = offset
-    
-    def get_prof_val(self, r, v0):
-        if self.extprof:
-            return v0*np.interp(r,self.extprofr,self.extprofvals)
-        else:
-            return (v0-self.offset)*(1-r**self.alpha1)**self.alpha2+self.offset
 
 @nb.experimental.jitclass
 class POPCON_data:
