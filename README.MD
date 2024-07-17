@@ -43,7 +43,7 @@ class openPOPCON:
                 self.openPOPCON_params.solve(n, T)
 
     def plot(self):
-        "Plots, with the option to update plot settings
+        "Plots, with the option to update plot settings"
     def read(self):
         "Reads in a pickle with a previous solution"
     def write(self):
