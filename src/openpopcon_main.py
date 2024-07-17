@@ -4,7 +4,7 @@ Created on Tue Jul 9 2024
 
 OpenPOPCON v2.0
 This is the Columbia University fork of the OpenPOPCON project developed
-for MIT cours 22.63. This project is a refactor of the contributions
+for MIT course 22.63. This project is a refactor of the contributions
 made to the original project in the development of MANTA. Contributors
 to the original project are listed in the README.md file.
 """
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import scipy.constants as const
 import scipy.integrate as integrate
-import xarray as xr
+# import xarray as xr
 import yaml
 from typing import Callable
 from openpopcon_util import *
@@ -389,3 +389,6 @@ class POPCON:
     def __check_settings(self) -> None:
         pass
 
+if __name__ == '__main__':
+    print('Hello, World!')
+    pass
