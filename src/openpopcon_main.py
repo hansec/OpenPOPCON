@@ -20,7 +20,8 @@ from typing import Callable
 from openpopcon_util import *
 import numba as nb
 
-
+# core of calculations
+# jit compiled
 @nb.experimental.jitclass(spec = [
             ('R', nb.float64), 
             ('a', nb.float64),
@@ -30,18 +31,37 @@ import numba as nb
             ('q_a', nb.float64),
             ('H', nb.float64),
             ('M_i', nb.float64),
-            ('fHe', nb.float64),
             ('f_LH', nb.float64),
             ('volgrid', nb.float64[:]),
             ('sqrtpsin', nb.float64[:]),
             ('impurityfractions', nb.float64[:]),
-            ('extprof', nb.boolean),
-            ('profsdefined', nb.boolean),
-            ('alpha1', nb.float64),
-            ('alpha2', nb.float64),
-            ('offset', nb.float64),
+            ('imcharges', nb.float64[:]),
+            ('extprof_geoms', nb.boolean),
+            ('geomsdefined', nb.boolean),
+            ('extprof_imps', nb.boolean),
+            ('impsdefined', nb.boolean),
+            ('j_alpha1', nb.float64),
+            ('j_alpha2', nb.float64),
+            ('j_offset', nb.float64),
+            ('ne_alpha1', nb.float64),
+            ('ne_alpha2', nb.float64),
+            ('ne_offset', nb.float64),
+            ('ni_alpha1', nb.float64),
+            ('ni_alpha2', nb.float64),
+            ('ni_offset', nb.float64),
+            ('Ti_alpha1', nb.float64),
+            ('Ti_alpha2', nb.float64),
+            ('Ti_offset', nb.float64),
+            ('Te_alpha1', nb.float64),
+            ('Te_alpha2', nb.float64),
+            ('Te_offset', nb.float64),
             ('extprofr', nb.float64[:]),
-            ('extprofvals', nb.float64[:])
+            ('extprof_j', nb.float64[:]),
+            ('extprof_ne', nb.float64[:]),
+            ('extprof_ni', nb.float64[:]),
+            ('extprof_Te', nb.float64[:]),
+            ('extprof_Ti', nb.float64[:]),
+            ('extprof_impfracs', nb.float64[:]),
           ]) # type: ignore
 class POPCON_params:
     """
@@ -64,8 +84,6 @@ class POPCON_params:
         "Assumed H factor relative to chosen scaling law []"
         self.M_i: float
         "Ion mass [AMU]"
-        self.fHe: float
-        "Ash fraction []"
         self.f_LH: float
         "Target LH fraction f_LH = P_sol / P_tot"
         self.volgrid = np.empty(0,dtype=np.float64)
@@ -75,15 +93,59 @@ class POPCON_params:
         # 0 = He, 1 = Ne, 2 = Ar, 3 = Kr, 4 = Xe, 5 = W
         self.impurityfractions = np.empty(6, dtype=np.float64)
         "Respective impurity fractions"
-        self.extprof: bool
-        self.profsdefined: bool = False
-        self.alpha1: float
-        self.alpha2: float
-        self.offset: float
+        self.imcharges = np.empty(6, dtype=np.float64)
+        "Respective impurity charges"
+
+        self.extprof_geoms: bool
+        self.geomsdefined: bool = False
+
+        self.extprof_imps: bool
+        self.impsdefined: bool = False
+
+        self.j_alpha1: float
+        self.j_alpha2: float
+        self.j_offset: float
+
+        self.ne_alpha1: float
+        self.ne_alpha2: float
+        self.ne_offset: float
+
+        self.ni_alpha1: float
+        self.ni_alpha2: float
+        self.ni_offset: float
+
+        self.Ti_alpha1: float
+        self.Ti_alpha2: float
+        self.Ti_offset: float
+
+        self.Te_alpha1: float
+        self.Te_alpha2: float
+        self.Te_offset: float
+
         self.extprofr = np.empty(0,dtype=np.float64)
-        self.extprofvals = np.empty(0,dtype=np.float64)
+        self.extprof_j = np.empty(0,dtype=np.float64)
+        self.extprof_ne = np.empty(0,dtype=np.float64)
+        self.extprof_ni = np.empty(0,dtype=np.float64)
+        self.extprof_Te = np.empty(0,dtype=np.float64)
+        self.extprof_Ti = np.empty(0,dtype=np.float64)
+
+        # PLACEHOLDER. TODO: Add impurity profiles
+        self.extprof_impfracs = np.empty(0,dtype=np.float64)
+
+        # TODO: figure these out
+        self.imcharges[0] = 2
+        self.imcharges[1] = -1
+        self.imcharges[2] = -1
+        self.imcharges[3] = -1
+        self.imcharges[4] = -1
+        self.imcharges[5] = -1
+
         pass
     
+    #-------------------------------------------------------------------
+    # Setup functions
+    #-------------------------------------------------------------------
+
     def _addextprof(self, extprofr, extprofvals):
         if not self.profsdefined:
             self.extprof = True
@@ -93,23 +155,98 @@ class POPCON_params:
         else:
             raise SyntaxError("Profile already defined. Create a new object.")
         
+    def _define_volgrid(self, volgrid, sqrtpsin):
+        self.volgrid = volgrid
+        self.sqrtpsin = sqrtpsin
+        
     def _set_alpha_and_offset(self, alpha1, alpha2, offset):
         self.extprof = False
         self.profsdefined = True
         self.alpha1 = alpha1
         self.alpha2 = alpha2
         self.offset = offset
+
+    #-------------------------------------------------------------------
+    # Properties
+    # TODO: Impurity profiles
+    #-------------------------------------------------------------------
+
+    # BS from Martin H Mode Scaling (Martin et al J. Phys 2008)
+    # Update from kikuchi?
+    @property
+    def bs_factor(self):
+        return self.B0**(0.8)*(2.*np.pi*self.R * 2*np.pi*self.a * np.sqrt((self.kappa**2+1)/2))**(0.94)
     
+    @property
+    def plasma_dilution(self):
+        # n_e = n20 / dilution
+        return 1/(1 + np.sum(self.impurityfractions*self.imcharges))
+
+    # Z_eff, effective ion charge
+    @property
+    def Zeff(self):
+        # Zeff = sum ( n_i * Z_i^2 ) / n_e
+        # n_i = n20 * species fraction
+        # n_e = n20 / dilution
+        # n20 cancels
+
+        # Hydrogen isotopes + impurities
+        return ( (1-np.sum(self.impurityfractions)) + np.sum(self.impurityfractions*self.imcharges**2))*self.plasma_dilution
+
+    # n_GR, Greenwald density in 10^20/m^3
+    @property
+    def n_GR(self):
+        return self.Ip/(np.pi*self.a**2)
+    
+    #-------------------------------------------------------------------
+    # Methods
+    #-------------------------------------------------------------------
+    
+    # Maybe do two of these classes for the two different profile types
+    # to skip this if-then-else?
     def get_prof_val(self, r, v0):
         if self.extprof:
             return v0*np.interp(r,self.extprofr,self.extprofvals)
         else:
             return (v0-self.offset)*(1-r**self.alpha1)**self.alpha2+self.offset
     
-    def etaext(self) -> float:
-        return get_eta(self.R)
+    def get_tauE(self, H, a_m, a_IP, a_R,
+                 a_a, a_kappa, a_BT, a_P, a_n20, P, n20):
+        
+        # Calculate the energy confinement time
+        # H = H factor
+        # a_* = scaling law powers
 
+        return H*self.M_i**(a_m)*self.Ip**(a_IP)*self.R**(a_R)\
+            *self.a**(a_a)*self.kappa**(a_kappa)*self.B0**(a_BT)\
+                *P**(a_P)*n20**(a_n20)
 
+    # plasma volume
+    # TODO: Add calculation from equilibrium
+    def get_enclosed_vol(self, rho):
+        # RHO IS NORMALIZED, TODO: CHANGE OTHER FUNCTIONS TO REFLECT THIS
+        return 2.*np.pi**2*(rho*self.a)**2*self.R*self.kappa
+
+    # volume of drho element, where rho=0 at magnetic axis and rho=1 at separatrix
+    # TODO: Add calculation from equilibrium
+    def get_dvolfac(self, rho):# -> Any:
+                # RHO IS NORMALIZED, TODO: CHANGE OTHER FUNCTIONS TO REFLECT THIS
+
+        return 4*np.pi**2*(rho*self.a)**2*self.R*self.kappa    
+
+    # coefficient for Spitzer conductivity, necessary to obtain ohmic power
+    def get_Cspitz(self, volavgcurr:bool):
+        Fz    = (1+1.198*self.Zeff + 0.222*self.Zeff**2)/(1+2.966*self.Zeff + 0.753*self.Zeff**2)
+        eta1  = 1.03e-4*self.Zeff*Fz
+        j0avg = self.Ip/(np.pi*self.a**2*self.kappa)*1.0e6
+        if (volavgcurr == True):
+            Cspitz = eta1*self.q_a*j0avg**2
+        else:
+            Cspitz = eta1
+        Cspitz /= 1.6e-16*1.0e20 #unit conversion to keV 10^20 m^-3
+        return Cspitz
+
+# NOT jit compiled
 class POPCON_settings:
     """
     Settings for the POPCON.
@@ -184,7 +321,7 @@ class POPCON_settings:
             self.profiles_f = data['profiles']
         pass
 
-
+# jit compiled
 @nb.experimental.jitclass
 class POPCON_data:
     """
@@ -193,13 +330,14 @@ class POPCON_data:
     def __init__(self) -> None:
         pass
 
+# NOT jit compiled
 class POPCON_plotsettings:
     def __init__(self,
                  filename: str,
                  ) -> None:
         pass
 
-
+# NOT jit compiled
 class POPCON:
     """
     The Primary class for the OpenPOPCON project.
@@ -251,5 +389,3 @@ class POPCON:
     def __check_settings(self) -> None:
         pass
 
-    def __get_taue(self) -> None:
-        pass
