@@ -12,8 +12,11 @@ To install the required packages, run `conda env create -f environment.yml` in t
 ## Bibliography
 
 [1] H.-S. Bosch and G. M. Hale, *Improved Formulas for Fusion Cross-Sections and Thermal Reactivities,* Nucl. Fusion **32**, 611 (1992).
+
 [2] S. C. Jardin, M. G. Bell, and N. Pomphrey, *TSC Simulation of Ohmic Discharges in TFTR,* Nucl. Fusion **33**, 371 (1993).
+
 [3] A. A. Mavrin, *Improved Fits of Coronal Radiative Cooling Rates for High-Temperature Plasmas,* Radiation Effects and Defects in Solids **173**, 388 (2018).
+
 [4] O. Sauter, *Geometric Formulas for System Codes Including the Effect of Negative Triangularity,* Fusion Engineering and Design **112**, 633 (2016).
 
 ## Numerical strategy
