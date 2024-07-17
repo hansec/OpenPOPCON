@@ -71,7 +71,6 @@ def read_eqdsk(filename):
         eqdsk_obj['rzlim'] = read_2d(fid, eqdsk_obj['nlim'], 2)
     return eqdsk_obj
 
-
 def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     """
     Calculates the flux surface volumes from the gEQDSK object.
@@ -163,66 +162,6 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
 
     return psin, Volgrid
 
-
 @nb.njit
 def get_n_GR(Ip: float, a: float) -> float:
     return Ip/(np.pi*a**2)
-
-
-@nb.njit
-# TODO: Arbitrary set of impurities
-def get_Zeff(impfrac: float, imcharg: float, fHe: float, dil: float) -> float:
-    return ((1-impfrac-fHe) + impfrac*imcharg**2 + 4*fHe)*dil
-
-
-@nb.njit
-# TODO: Update with Kikuchi eq?
-def get_q_a(a: float, B0: float, kappa: float, R: float, Ip: float) -> float:
-    return 2*np.pi*a**2*B0*(kappa**2+1)/(2*R*const.mu_0*Ip*10**6)
-
-
-@nb.njit
-def get_Cspitz(Zeff: float, Ip: float, q_a: float, a: float, kappa: float, volavgcurr: float) -> float:
-    Fz = (1+1.198*Zeff + 0.222*Zeff**2)/(1+2.966*Zeff + 0.753*Zeff**2)
-    eta1 = 1.03e-4*Zeff*Fz
-    j0avg = Ip/(np.pi*a**2*kappa)*1.0e6
-    if (volavgcurr == True):
-        Cspitz = eta1*q_a*j0avg**2
-    else:
-        Cspitz = eta1
-    Cspitz /= 1.6e-16*1.0e20  # unit conversion to keV 10^20 m^-3
-    return Cspitz
-
-
-@nb.njit
-def get_plasma_dilution(impfrac: float, imcharg: float, fHe: float) -> float:
-    return 1/(1 + impfrac*imcharg + 2*fHe)
-
-
-@nb.njit
-def get_P_LH_threshold(n20: float, bs: float) -> float:  # TODO: Update with Oak paper?
-    return 0.049*n20**(0.72)*bs
-
-
-@nb.njit
-def get_bs_factor(B0: float, R: float, a: float, kappa: float) -> float:
-    return B0**(0.8)*(2.*np.pi*R * 2*np.pi*a * np.sqrt((kappa**2+1)/2))**(0.94)
-
-
-@nb.njit
-# TODO: Update with Kikuchi eq?
-def get_plasma_0d_vol(a: float, R: float, kappa: float) -> float:
-    """
-    Volume of the plasma when a gEQDSK is unavailable.
-    """
-    return 2.*np.pi**2*a**2*R*kappa
-
-
-@nb.njit
-# TODO: Update with Kikuchi eq?
-def get_plasma_0d_dvolfac(a: float, R: float, kappa: float) -> float:
-    """
-    Jacobian factor for the volume integral when a gEQDSK is 
-    unavailable.
-    """
-    return 4*np.pi**2*a**2*R*kappa
