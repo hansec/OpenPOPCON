@@ -64,6 +64,7 @@ class openPOPCON_results:
 
     openPOPCON_params: jitted 'class'
     openPOPCON_settings: 'class'
+    output arrays at power balance: arrays
 
     
 ```
