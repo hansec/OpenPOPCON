@@ -19,6 +19,12 @@ To install the required packages, run `conda env create -f environment.yml` in t
 
 [4] O. Sauter, *Geometric Formulas for System Codes Including the Effect of Negative Triangularity,* Fusion Engineering and Design **112**, 633 (2016).
 
+[5] Y. R. Martin, T. Takizuka (and the ITPA CDBM H.-mode Threshold Database Working Group), *Power Requirement for Accessing the H-Mode in ITER*, J. Phys.: Conf. Ser. **123**, 012033 (2008).
+
+[6] H. Zohm, *On the Use of High Magnetic Field in Reactor Grade Tokamaks*, J Fusion Energ **38**, 3 (2019).
+
+
+
 ## Numerical strategy
 
 OpenPOPCON, unlike other POPCON codes, employs a relaxation algorithm. This means it can often take quite long to converge on an answer compared to a code that would solve the problem explicitly. However, we have taken an approach with [numba](https://numba.pydata.org/) to speed up the code. This means that the code is compiled to machine code and can be run much faster than a traditional python code. The code structure is as follows:
