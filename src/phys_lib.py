@@ -5,7 +5,9 @@ import numba as nb
 Created Thurs July 18 2024
 
 Compiled library that calculates L_Z and Z_eff from the temperature
-using polynomial fits from Mavrin 2018.
+using polynomial fits from Mavrin 2018. Also contains cross sections from
+H.-S. Bosch and G.M. Hale 1992.
+TODO: Add D-He3 reaction to cross section / reactivity.
 """
 
 @nb.njit
@@ -24,7 +26,7 @@ def get_Zeffs(T_e_keV:float):
 	Tlog = np.log10(T_e_keV)
 
 	poly = np.empty(5)
-	for i in nb.prange(5):
+	for i in np.arange(5):
 		poly[i] = np.power(Tlog, i)
 
 	return np.sum(zeff_coeffs*poly, axis=1)
@@ -40,10 +42,11 @@ def get_rads(T_e_keV:float):
 
 	Lz_coeffs = get_coeffs_Lz(T_e_keV)
 	# 6x5 matrix of Lz values for each impurity
+	Tlog = np.log10(T_e_keV)
 
 	poly = np.empty(5)
-	for i in nb.prange(5):
-		poly[i] = np.power(T_e_keV, i)
+	for i in np.arange(5):
+		poly[i] = np.power(Tlog, i)
 
 	return np.power(10,np.sum(Lz_coeffs*poly, axis=1))
 
@@ -283,3 +286,117 @@ def get_coeffs_Lz(T_e_keV):
 
 	return coeffs
 	
+@nb.njit
+def get_sigma(T_i_keV, reaction_num):
+
+	"""
+	Reaction cross section in barns (1e-28 m^2), from Hale/Bosch 1992.
+
+	reaction_num table:
+		- 1: T(d,n)He4
+		- 2: D(d,p)T
+		- 3: D(d,n)He3
+	"""
+
+	#D-T
+	if reaction_num == 1:
+		A1 = 6.927e4
+		A2 = 7.454e8
+		A3 = 2.050e6
+		A4 = 5.2002e4
+		A5 = 0
+		B1 = 6.38e1
+		B2 = -9.95e-1
+		B3 = 6.981e-5
+		B4 = 1.728e-4		
+		B_G = 34.3827
+
+	#D-D -> p, T
+	if reaction_num == 2:
+		A1 = 5.5576e4
+		A2 = 2.1054e2
+		A3 = -3.2638e-2
+		A4 = 1.4987e-6
+		A5 = 1.8181e-10
+		B1 = 0
+		B2 = 0
+		B3 = 0
+		B4 = 0
+		B_G = 31.3970
+
+	#D-D -> n, He3
+	if reaction_num == 3:
+		A1 = 5.3701e4
+		A2 = 3.3027e2
+		A3 = -1.2706e-1
+		A4 = 2.9327e-5
+		A5 = -2.5151e-9
+		B1 = 0
+		B2 = 0
+		B3 = 0
+		B4 = 0	
+		B_G = 31.3970
+
+    #KeV/c^2
+	S = lambda T: (A1 + T * (A2 + T * (A3 + T * (A4 + T * A5))))/(1+T * (B1 + T * (B2 + T * (B3 + T* B4))))
+	return 0.001*S(T_i_keV) / (T_i_keV* np.exp(B_G / np.sqrt((T_i_keV))))
+
+@nb.njit
+def get_reactivity(T_i_keV, reaction_num):
+	"""
+	Reaction cross section in barns (1e-28 m^2), from Hale/Bosch 1992.
+	See equations 12-14.
+
+	reaction_num table:
+		- 1: T(d,n)He4
+		- 2: D(d,p)T
+		- 3: D(d,n)He3
+	"""
+
+	#D-T
+	if reaction_num == 1:
+		C1 = 1.17302e-9
+		C2 = 1.51361e-2
+		C3 = 7.51886e-2
+		C4 = 4.60643e-3
+		C5 = 1.35000e-2
+		C6 = -1.06750e-4
+		C7 = 1.36600e-5
+		
+		mc2 = 1124656
+		B_G = 34.3827
+
+	#D-D -> p, T
+	if reaction_num == 2:
+		C1 = 5.65718e-12
+		C2 = 3.41267e-3
+		C3 = 1.99167e-3
+		C4 = 0
+		C5 = 1.05060e-5
+		C6 = 0
+		C7 = 0
+		
+		mc2 = 937814
+		B_G = 31.3970
+
+	#D-D -> n, He3
+	if reaction_num == 3:
+		C1 = 5.43360e-12
+		C2 = 5.85778e-3
+		C3 = 7.68222e-3
+		C4 = 0
+		C5 = -2.96400e-6
+		C6 = 0
+		C7 = 0
+		
+		mc2 = 937814
+		B_G = 31.3970
+
+	theta = T_i_keV / \
+		( 1 - (	(T_i_keV*(C2+T_i_keV*(C4+T_i_keV*C6)))/ \
+						   (1+T_i_keV*(C3+T_i_keV*(C5+T_i_keV*C7))) ) )
+	xi = (B_G**2/(4 * theta))**(1/3)
+
+	return C1*theta*np.sqrt( xi / (mc2* T_i_keV**3) )*np.exp(-3 * xi)
+
+
