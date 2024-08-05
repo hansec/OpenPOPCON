@@ -7,6 +7,12 @@ This is the Columbia University fork of the OpenPOPCON project developed
 for MIT course 22.63. This project is a refactor of the contributions
 made to the original project in the development of MANTA. Contributors
 to the original project are listed in the README.md file.
+
+If you make changes, append your name and the date to this list.
+
+Contributors:
+- Matthew Pharr (2024-07-09)
+
 """
 
 from re import I
@@ -838,7 +844,6 @@ class POPCON_settings:
             self.NTi = int(data['NTi'])
             self.gfilename = str(data['gfilename'])
             self.profsfilename = str(data['profsfilename'])
-            self.scalinglaw = data['scalinglaw']
             self.nmax_frac = float(data['nmax_frac'])
             self.nmin_frac = float(data['nmin_frac'])
             self.Tmax_keV = float(data['Tmax_keV'])
@@ -846,10 +851,7 @@ class POPCON_settings:
             self.maxit = int(data['maxit'])
             self.accel = float(data['accel'])
             self.err = float(data['err'])
-            self.parallel = bool(data['parallel'])
             self.verbosity = int(data['verbosity'])
-            self.profiles = bool(data['profiles'])
-            self.geom = bool(data['geom'])
         except KeyError as e:
             raise KeyError(f'Key {e} not found in {filename}')
 
@@ -920,7 +922,14 @@ class POPCON_plotsettings:
 
     def read(self, filename: str) -> None:
         if filename.endswith('.yaml') or filename.endswith('.yml'):
-            return
+            data = yaml.safe_load(open(filename, 'r'))
+        else:
+            raise ValueError('Filename must end with .yaml or .yml')
+        self.plotoptions = data['plotoptions']
+        self.figsize = tuple(data['figsize'])
+        self.yax = data['yax']
+        
+        pass
 
 
 # NOT jit compiled
@@ -1108,8 +1117,7 @@ class POPCON:
 
         ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
         infoboxtext = f"I_p = {p.Ip:.2f}\nB_0 = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\nkappa = {p.kappa:.2f}\ndelta = {p.delta:.2f}\nM_i = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\nimpurityfractions={p.impurityfractions}"
-
-        
+        ax.text(x=.1,y=.1,s=infoboxtext,va='bottom',bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.7))
 
     
     def plot_contours(self, plotbool:bool, ax, data:np.ndarray, xx:np.ndarray, yy:np.ndarray, levels, color, linewidth, label:str, fontsize:int, fmt:str):
@@ -1148,9 +1156,13 @@ class POPCON:
     def __get_profiles(self, i_params) -> None:
         profstable = read_profsfile(self.settings.profsfilename)
         ne = np.asarray(profstable['ne'])
+        ne = ne/ne[0]
         ni = np.asarray(profstable['ni'])
+        ni = ni/ni[0]
         Ti = np.asarray(profstable['Ti'])
+        Ti = Ti/Ti[0]
         Te = np.asarray(profstable['Te'])
+        Te = Te/Te[0]
         rho = np.asarray(profstable['rho'])
         ne_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ne)
         ni_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ni)
@@ -1184,7 +1196,10 @@ class POPCON:
 
         J = np.sqrt(Jpol**2 + Jtor**2)
         Jr = np.interp(sqrtpsin,np.sqrt(psin),J)
-
+        
+        Ipint = np.trapz(Jr,2*np.pi*(self.params[-1].a*sqrtpsin)**2)
+        print(Ipint)
+        Jr = Jr/Ipint
         self.params[i_params]._addextprof(sqrtpsin,-2)
         self.params[i_params]._addextprof(volgrid,-1)
         self.params[i_params]._addextprof(Jr,0)
