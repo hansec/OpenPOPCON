@@ -1,7 +1,6 @@
 import numpy as np
 import contourpy as cntr
-import numba as nb
-import scipy.constants as const
+import csv
 
 
 def read_eqdsk(filename):
@@ -162,6 +161,23 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
 
     return psin, Volgrid
 
-@nb.njit
-def get_n_GR(Ip: float, a: float) -> float:
-    return Ip/(np.pi*a**2)
+def read_profsfile(filename):
+    with open(filename, 'r') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        profstable = {}
+        for h in header:
+            profstable[h] = []
+        for row in reader:
+            for h, v in zip(header, row):
+                profstable[h].append(v)
+    
+    if 'rho' not in profstable and 'r' not in profstable:
+        if 'psi' not in profstable:
+            raise ValueError('No rho, r or psi in profile file')
+        else:
+            profstable['rho'] = np.sqrt(np.asarray(profstable['psi'], dtype=np.float64))
+    elif 'rho' not in profstable:
+        profstable['rho'] = profstable['r']
+
+    return profstable
