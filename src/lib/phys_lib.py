@@ -18,7 +18,7 @@ def get_Zeffs(T_e_keV:float):
 
 	# Formulas valid only for region of validity: 0.1 <= T_e_keV <= 100
 	if T_e_keV < 0.1 or T_e_keV > 100:
-		print('Warning: T_e_keV out of range for Zeff calculation. Valid range is 0.1 <= T_e_keV <= 100')
+		print('Warning: T_e_keV =',T_e_keV,'out of range for Zeff calculation. Valid range is 0.1 <= T_e_keV <= 100')
 
 	zeff_coeffs = get_coeffs_Zeff(T_e_keV)
 	# 6x5 matrix of Zeff values for each impurity
@@ -38,7 +38,7 @@ def get_rads(T_e_keV:float):
 	"""
 	# Formulas valid only for region of validity: 0.1 <= T_e_keV <= 100
 	if T_e_keV < 0.1 or T_e_keV > 100:
-		print('Warning: T_e_keV out of range for Lz calculation. Valid range is 0.1 <= T_e_keV <= 100')
+		print('Warning: T_e_keV =',T_e_keV,'out of range for Lz calculation. Valid range is 0.1 <= T_e_keV <= 100')
 
 	Lz_coeffs = get_coeffs_Lz(T_e_keV)
 	# 6x5 matrix of Lz values for each impurity

@@ -84,17 +84,16 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         Number of resolution points. The default is 300.
     """
     rs = np.linspace(gEQDSK['rleft'],
-                     gEQDSK['rleft'] + gEQDSK['rdim'],
-                     gEQDSK['nr'])
+                        gEQDSK['rleft'] + gEQDSK['rdim'],
+                        gEQDSK['nr'])
     zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
-                     gEQDSK['zmid'] + gEQDSK['zdim']/2,
-                     gEQDSK['nz'])
-
+                        gEQDSK['zmid'] + gEQDSK['zdim']/2,
+                        gEQDSK['nz'])
     # Get and normalize fluxes
-    fluxes = gEQDSK['psirz'] - gEQDSK['psibry']
-    fluxes /= np.max(fluxes)
-    if gEQDSK['psibry'] < gEQDSK['psimag']:
-        fluxes = 1-fluxes
+    fluxes = gEQDSK['psirz']-gEQDSK['psibry']
+    fmin = np.min(fluxes)
+    fluxes += -fmin
+    fluxes /= np.abs(fmin)
 
     cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
     allsegs = []
@@ -115,12 +114,12 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
             closed_fluxsurfaces.append(segset[truei])
 
     h = closed_fluxsurfaces[-1][:, 1].max() - \
-        closed_fluxsurfaces[-1][:, 1].min()
+            closed_fluxsurfaces[-1][:, 1].min()
     dh_target = h/nres
 
     # Get flux surface volumes
     hs = np.linspace(closed_fluxsurfaces[-1][:, 1].min()+dh_target,
-                     closed_fluxsurfaces[-1][:, 1].max()-dh_target, nres)
+                        closed_fluxsurfaces[-1][:, 1].max()-dh_target, nres)
     dh = hs[1] - hs[0]
     Volgrid = np.zeros(len(closed_fluxsurfaces))
 
@@ -135,12 +134,12 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
                 if (hs[i] - contour[j][1])*(hs[i] - contour[j+1][1]) < 0:
                     # interpolate to find the x value
                     x = contour[j][0] + (hs[i] - contour[j][1])*(contour[j+1]
-                                                                 [0] - contour[j][0])/(contour[j+1][1] - contour[j][1])
+                                                                    [0] - contour[j][0])/(contour[j+1][1] - contour[j][1])
                     xs[k] = x
                     k += 1
             if k != 2:
-                print(i)
-                raise ValueError('No two x values found')
+                # raise ValueError('No two x values found')
+                continue
             xinner = min(xs)
             xouter = max(xs)
             xinners[i] = xinner
@@ -172,6 +171,8 @@ def read_profsfile(filename):
             for h, v in zip(header, row):
                 profstable[h].append(v)
     
+    for k in profstable.keys():
+        profstable[k] = np.asarray(profstable[k], dtype=np.float64)
     if 'rho' not in profstable and 'r' not in profstable:
         if 'psi' not in profstable:
             raise ValueError('No rho, r or psi in profile file')
