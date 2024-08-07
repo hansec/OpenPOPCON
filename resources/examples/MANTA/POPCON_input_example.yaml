@@ -24,7 +24,7 @@ B_0: 11.0 # on-axis magnetic field in Tesla
 #----------------------
 
 M_i: 2.5 # average ion mass in amu
-tipeak_over_tepeak: 1.05 # ratio of ion to electron temperature at peak
+tipeak_over_tepeak: 1.0 # ratio of ion to electron temperature at peak
 fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
 
 #----------------------
@@ -56,7 +56,7 @@ gfilename: "./resources/examples/MANTA/gMANTA"
 profsfilename: "./resources/examples/MANTA/profsMANTA.csv"
 nmax_frac: 1.2 # maximum density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
-Tmax_keV: 20. # maximum volume-averaged temperature in keV
+Tmax_keV: 11. # maximum volume-averaged temperature in keV
 Tmin_keV: 3 # minimum volume-averaged temperature in keV
 maxit: 1000 # maximum number of iterations
 accel: 1.1 # acceleration factor

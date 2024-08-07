@@ -45,12 +45,14 @@ from .lib import phys_lib as phys
             ('fuel', nb.int64),
             ('sqrtpsin', nb.float64[:]),
             ('volgrid', nb.float64[:]),
+            ('agrid', nb.float64[:]),
             ('nr', nb.int64),
             ('impurityfractions', nb.float64[:]),
             # ('extprof_geoms', nb.boolean),
             ('geomsdefined', nb.boolean),
             ('rdefined', nb.boolean),
             ('volgriddefined', nb.boolean),
+            ('agriddefined', nb.boolean),
             ('extprof_imps', nb.boolean),
             ('impsdefined', nb.boolean),
             ('_jdefined', nb.boolean),
@@ -130,6 +132,7 @@ class POPCON_params:
         #---------------------------------------------------------------
         self.sqrtpsin = np.empty(0, dtype=np.float64)
         self.volgrid = np.empty(0,dtype=np.float64)
+        self.agrid = np.empty(0,dtype=np.float64)
         self.nr: int
         # 0 = He, 1 = Ne, 2 = Ar, 3 = Kr, 4 = Xe, 5 = W
         self.impurityfractions = np.empty(6, dtype=np.float64)
@@ -138,6 +141,7 @@ class POPCON_params:
         self.geomsdefined: bool = False
         self.rdefined: bool = False
         self.volgriddefined: bool = False
+        self.agriddefined: bool = False
 
         # Impurity profiles are not implemented yet
         self.extprof_imps: bool = False
@@ -239,6 +243,9 @@ class POPCON_params:
     def V(self):
         return self.volume_integral(self.sqrtpsin, np.ones_like(self.sqrtpsin))
     
+    @property
+    def A(self):
+        return self.agrid[-1]
     #-------------------------------------------------------------------
     # Profiles and integration
     #-------------------------------------------------------------------
@@ -258,6 +265,10 @@ class POPCON_params:
         6: bmax profile
         7: bavg profile
         """
+        if profid == -3:
+            if not self.agriddefined:
+                raise ValueError("Area grid not defined.")
+            return np.interp(rho, self.sqrtpsin, self.agrid)
         if profid == -2:
             if not self.rdefined:
                 raise ValueError("Geometry profiles not defined.")
@@ -624,9 +635,14 @@ class POPCON_params:
     #-------------------------------------------------------------------
 
     def _addextprof(self, extprofvals, profid):
-        if profid == -2:
+        if profid == -3:
+            if self.agriddefined:
+                raise ValueError("Area grid already defined.")
+            self.agrid = extprofvals
+            self.agriddefined = True
+        elif profid == -2:
             if self.rdefined:
-                raise ValueError("Geometry profiles already defined.")
+                raise ValueError("Radius profile already defined.")
             self.sqrtpsin = extprofvals
             self.nr = extprofvals.shape[0]
             self.rdefined = True
@@ -868,6 +884,7 @@ class POPCON_settings:
     ('T_i_avg', nb.float64[:]),
     ('Paux', nb.float64[:,:]),
     ('Pfusion', nb.float64[:,:]),
+    ('Pfusionheating', nb.float64[:,:]),
     ('Pohmic', nb.float64[:,:]),
     ('Prad', nb.float64[:,:]),
     ('Pheat', nb.float64[:,:]),
@@ -875,6 +892,7 @@ class POPCON_settings:
     ('Palpha', nb.float64[:,:]),
     ('Pdd', nb.float64[:,:]),
     ('Pdt', nb.float64[:,:]),
+    ('Psol', nb.float64[:,:]),
     ('tauE', nb.float64[:,:]),
     ('Q', nb.float64[:,:]),
     ('H89', nb.float64[:,:]),
@@ -894,6 +912,7 @@ class POPCON_data:
         self.T_i_avg: np.ndarray
         self.Paux: np.ndarray
         self.Pfusion: np.ndarray
+        self.Pfusionheating: np.ndarray
         self.Pohmic: np.ndarray
         self.Prad: np.ndarray
         self.Pheat: np.ndarray
@@ -901,6 +920,7 @@ class POPCON_data:
         self.Palpha: np.ndarray
         self.Pdd: np.ndarray
         self.Pdt: np.ndarray
+        self.Psol: np.ndarray
         self.tauE: np.ndarray
         self.Q: np.ndarray
         self.H89: np.ndarray
@@ -1029,6 +1049,7 @@ class POPCON:
             for i in nb.prange(Nn):
                 for j in nb.prange(NTi):
                     result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, Ti[j], ni[i]))
+                    result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, Ti[j], ni[i]))
                     result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, Ti[j], ni[i]))
                     result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, Ti[j], ni[i]))
                     result.Pheat[i,j] = result.Pfusion[i,j] + result.Pohmic[i,j] + result.Paux[i,j]
@@ -1036,12 +1057,14 @@ class POPCON:
                     result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, Ti[j], ni[i]))
                     result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, Ti[j], ni[i]))
                     result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, Ti[j], ni[i]))
+                    result.Ploss[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j]
                     result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], ni[i])
                     result.Q[i,j] = params.Q_fusion(Ti[j], ni[i], result.Paux[i,j])
                     result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], ni[i])
                     result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], ni[i])
                     result.vloop[i,j] = params.get_Vloop(Ti[j], ni[i])
                     result.betaN[i,j] = 100*params.get_BetaN(Ti[j], ni[i]) # in percent
+                    result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
             return result
         
         self.outputs = []
@@ -1068,6 +1091,7 @@ class POPCON:
 
             result.Paux = Paux
             result.Pfusion = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
@@ -1081,6 +1105,7 @@ class POPCON:
             result.H98 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.vloop = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.betaN = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Psol = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
 
             result = populate_outputs(params, result, self.settings.Nn, self.settings.NTi, ni, Ti)
 
@@ -1109,6 +1134,7 @@ class POPCON:
         Pdd += self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDpT_prof(rho, Ti, n20))
         Pdt = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, Ti, n20))
         tauE = self.params[i_params].tauE_scalinglaw(Pheat, n20)
+        Ploss = Pfusion_heating + Pohmic + Paux
         Q = self.params[i_params].Q_fusion(Ti, n20, Paux)
         H89 = tauE/self.params[i_params].tauE_H89(Pheat,n20)
         H98 = tauE/self.params[i_params].tauE_H98(Pheat,n20)
@@ -1119,6 +1145,8 @@ f"""
 Solution:
 P_aux = {Paux}
 P_fusion = {Pfusion}
+P_SOL = {Ploss - Prad}
+P_load = {(Ploss-Prad)/self.params[i_params].A}
 P_ohmic = {Pohmic}
 P_rad = {Prad}
 P_heat = {Pheat}
@@ -1180,10 +1208,8 @@ betaN = {betaN}
             ax.legend(loc='lower left')
             if show:
                 plt.show()
-                        
-
-        
         pass
+
     #-------------------------------------------------------------------
     # Plotting
     #-------------------------------------------------------------------
@@ -1200,7 +1226,7 @@ betaN = {betaN}
             raise ValueError("Invalid y-axis. Change yax in plotsettings.")
         xx, yy = np.meshgrid(xx,yy)
         if names is None:
-            names = ['Paux', 'Pfusion', 'Pohmic', 'Prad', 'Pheat', 'Ploss', 'Palpha', 'Pdd', 'Pdt', 'tauE', 'Q', 'H89', 'H98', 'vloop', 'betaN', 'n_G_frac', 'n20_max', 'n20_avg', 'T_i_max', 'T_i_avg']
+            names = ['Paux', 'Pfusion', 'Pfusionheating', 'Pohmic', 'Prad', 'Pheat', 'Ploss', 'Palpha', 'Pdd', 'Pdt', 'tauE', 'Q', 'H89', 'H98', 'vloop', 'betaN', 'n_G_frac', 'n20_max', 'n20_avg', 'T_i_max', 'T_i_avg']
         for name in names:
             opdict = self.plotsettings.plotoptions[name]
             if opdict['plot'] == False:
@@ -1323,7 +1349,7 @@ betaN = {betaN}
 
     def __get_geometry(self, i_params) -> None:
         gfile = read_eqdsk(self.settings.gfilename)
-        psin, volgrid = get_fluxvolumes(gfile)
+        psin, volgrid, agrid = get_fluxvolumes(gfile)
         sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
         volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
 
@@ -1345,10 +1371,12 @@ betaN = {betaN}
         Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
         Ipint = np.trapz(Jr,2*np.pi*(self.params[-1].a*sqrtpsin)**2)
         Jr = Jr/Ipint
+
         self.params[i_params]._addextprof(sqrtpsin,-2)
         self.params[i_params]._addextprof(volgrid,-1)
         self.params[i_params]._addextprof(Jr,0)
         self.params[i_params]._addextprof(qr,5)
+        self.params[i_params]._addextprof(agrid,-3)
         pass
 
     def __check_settings(self) -> None:

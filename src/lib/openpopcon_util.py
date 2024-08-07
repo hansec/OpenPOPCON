@@ -72,7 +72,7 @@ def read_eqdsk(filename):
 
 def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     """
-    Calculates the flux surface volumes from the gEQDSK object.
+    Calculates the flux surface volumes and areas from the gEQDSK object.
 
     Parameters
     ----------
@@ -122,7 +122,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
                         closed_fluxsurfaces[-1][:, 1].max()-dh_target, nres)
     dh = hs[1] - hs[0]
     Volgrid = np.zeros(len(closed_fluxsurfaces))
-
+    Agrid = np.zeros(len(closed_fluxsurfaces))
     for icontour, contour in enumerate(closed_fluxsurfaces):
         xinners = np.zeros(nres)
         xouters = np.zeros(nres)
@@ -157,8 +157,12 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         # Top cap
         V += 0.5*np.pi*dh * (xouters[-1]**2 - xinners[-1]**2)
         Volgrid[icontour] = V
+        # Get the area of the flux surface
+        d = np.diff(contour, axis=0)
+        ds = np.sqrt(d[:, 0]**2 + d[:, 1]**2)
+        Agrid[icontour] = np.trapz(np.pi*contour[:-1,0]**2 * ds, axis=0)
 
-    return psin, Volgrid
+    return psin, Volgrid, Agrid
 
 def read_profsfile(filename):
     with open(filename, 'r') as f:
