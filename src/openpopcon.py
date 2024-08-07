@@ -15,13 +15,10 @@ Contributors:
 
 """
 
-from re import I
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-# import scipy.constants as const
 import yaml
-# from typing import Callable
 from .lib.openpopcon_util import *
 import numba as nb
 from .lib import phys_lib as phys
@@ -781,45 +778,7 @@ class POPCON_params:
 
 # NOT jit compiled
 class POPCON_settings:
-    """
-    Settings for the POPCON.
-    """
-    Nn: int
-    "Resolution in density"
-    NTi: int
-    "Resolution in temperature"
-    scalinglaw: str
-    "Which scaling law to use"
-    nmax_frac: float
-    "Greenwald fraction for nmax"
-    nmin_frac: float
-    "Minimum density fraction"
-    Tmax_keV: float
-    "Max temperature in keV"
-    Tmin_keV: float
-    "Min temperature in keV"
-    maxit: int
-    "Max iterations"
-    accel: float
-    "Overrelaxation parameter"
-    err: float
-    "Error tolerance"
-    parallel: bool
-    "Whether to use parallel processing"
-
-    verbosity: int
-    """
-    Verbosity level:
-    0 - No output
-    1 - Minimal output
-    2 - Full output
-    3 - Debug output
-    4 - Print all matrices
-    """
-    # Additional functionality
-    ext_profiles: bool
-    "Optional eqdsk file for geometry."
-    profiles_f: str
+    # 
 
     def __init__(self,
                  filename: str,
