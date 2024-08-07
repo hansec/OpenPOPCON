@@ -1,0 +1,11 @@
+# run: conda env create --file environment.yml
+name: openPOPCON
+dependencies:
+- python=3.10
+- anaconda
+- pip
+- numpy
+- scipy
+- matplotlib
+- numba
+- pyyaml

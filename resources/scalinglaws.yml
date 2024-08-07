@@ -1,0 +1,32 @@
+H89:
+  scaling_const: 0.048
+  M_i_alpha: 0.5
+  Ip_alpha: 0.85
+  R_alpha: 1.2
+  a_alpha: 0.3
+  kappa_alpha: 0.5
+  B0_alpha: 0.2
+  Pheat_alpha: -0.5
+  n20_alpha: 0.1
+
+H98y2:
+  scaling_const: 0.145
+  M_i_alpha: 0.19
+  Ip_alpha: 0.93
+  R_alpha: 1.39
+  a_alpha: 0.58
+  kappa_alpha: 0.78
+  B0_alpha: 0.15
+  Pheat_alpha: -0.69
+  n20_alpha: 0.41
+
+H_NT23:
+  scaling_const: 0.2134
+  M_i_alpha: 0.19
+  Ip_alpha: 1.1
+  R_alpha: 1.39
+  a_alpha: 0.58
+  kappa_alpha: 0.78
+  B0_alpha: 0.18
+  Pheat_alpha: -0.89
+  n20_alpha: 0.46

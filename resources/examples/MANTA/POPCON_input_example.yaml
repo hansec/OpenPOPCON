@@ -1,0 +1,65 @@
+# OpenPOPCON input file
+#-----------------------------------------------------------------------
+# Machine Paramters
+#-----------------------------------------------------------------------
+
+R: 4.55 # major radius in meters
+a: 1.2 # minor radius in meters
+kappa: 1.4 # elongation
+delta: -0.5 # triangularity
+
+#----------------------
+# I_P and q* can be calculated from each other. Pick one to specify:
+I_P: 10. # plasma current in MA
+# or
+# q_star: 2.5
+#----------------------
+
+#----------------------
+# B_0 and B_coil can be calculated from each other. Pick one to specify:
+B_0: 11.0 # on-axis magnetic field in Tesla
+# or
+# B_coil: 24.0 # magnetic field at the coil in Tesla
+# wall_thickness: 1.5 # wall thickness between magnet and separatrix in meters
+#----------------------
+
+M_i: 2.5 # average ion mass in amu
+tipeak_over_tepeak: 1.0 # ratio of ion to electron temperature at peak
+fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
+
+#----------------------
+# Impurity Fractions
+# In order, the fractions of:
+# 0 He ash
+# 1 Ne
+# 2 Ar
+# 3 Kr
+# 4 Xe
+# 5 W
+# Impfracs and Z_eff can be calculated from each other. If you specify
+# Z_eff, the impurity fraction for the specified impurity will be overwritten.
+impurityfractions: [0.02, 0., 0., 0.00075, 0., 0.]
+Z_eff: 2.1 # average effective charge of plasma
+impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
+#----------------------
+
+scalinglaw: "H_NT23" # Name of tau_E scaling law as defined in scaling_laws.yaml
+H_fac: 1.0 # Factor by which to multiply the scaling law
+nr: 100 # number of radial grid points
+
+#----------------------
+# Algorithm settings
+#----------------------
+Nn: 20 # resolution of densities
+NTi: 20 # resolution of ion temperatures
+gfilename: "./resources/examples/MANTA/gMANTA"
+profsfilename: "./resources/examples/MANTA/profsMANTA.csv"
+nmax_frac: 1.2 # maximum density as a fraction of the Greenwald density
+nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
+Tmax_keV: 11. # maximum volume-averaged temperature in keV
+Tmin_keV: 3 # minimum volume-averaged temperature in keV
+maxit: 1000 # maximum number of iterations
+accel: 1.1 # acceleration factor
+err: 1e-6 # error tolerance
+verbosity: 1 # 0 for no output, 1 for minimal output, 2 for verbose output
+parallel: False
