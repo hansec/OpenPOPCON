@@ -400,3 +400,21 @@ def get_reactivity(T_i_keV, reaction_num):
 	return C1*theta*np.sqrt( xi / (mc2* T_i_keV**3) )*np.exp(-3 * xi)
 
 
+def get_B0(B_coil:float,wall_thickness:float, R:float, a:float) -> float:
+
+	B0 = B_coil*(R-wall_thickness-a)/R
+
+	return B0
+
+def get_Ip(qstar:float, R:float, a:float, B0:float, kappa:float) -> float:
+
+	Ip = 2*np.pi*a**2*B0*(kappa**2+1)/(2*R*4e-7*np.pi*qstar*10**6) 
+	return Ip
+
+def get_impurity_fraction(Zeff:float, fHe:float, impurity:int, T0:float) -> float:
+
+	zeffs = get_Zeffs(T0)
+	imcharge = zeffs[impurity]
+
+	impfrac = (1 + 3*fHe - Zeff - 2*fHe*Zeff)/(1 - imcharge**2 + imcharge*Zeff)
+	return impfrac
