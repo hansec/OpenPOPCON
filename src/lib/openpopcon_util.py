@@ -162,7 +162,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         ds = np.sqrt(d[:, 0]**2 + d[:, 1]**2)
         Agrid[icontour] = np.trapz(np.pi*contour[:-1,0]**2 * ds, axis=0)
 
-    return psin, Volgrid, Agrid
+    return psin, Volgrid, Agrid, closed_fluxsurfaces
 
 def read_profsfile(filename):
     with open(filename, 'r') as f:

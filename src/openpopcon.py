@@ -803,12 +803,30 @@ class POPCON_settings:
             self.delta = float(data['delta'])
             # Ip optional
             # B0 optional
-            self.B0 = float(data['B_0'])
-            self.Ip = float(data['I_P'])
+            if 'B0' in data:
+                self.B0 = float(data['B_0'])
+            elif 'B_coil' in data and 'wall_thickness' in data:
+                self.B0 = phys.get_B0(data['B_coil'], data['wall_thickness'], self.R, self.a)
+                print(f"B0 = {self.B0} calculated from B_coil and wall_thickness.")
+            else:
+                raise KeyError('B0 or B_coil and wall_thickness not found in settings file.')
+            
+            if 'I_P' in data:
+                self.Ip = float(data['I_P'])
+            elif 'qstar' in data:
+                self.Ip = phys.get_Ip(data['qstar'], self.R, self.a, self.B0, self.kappa)
+                print(f"Ip = {self.Ip} calculated from qstar.")
+            else:
+                raise KeyError('I_P or qstar not found in settings file.')
             self.M_i = float(data['M_i'])
             self.tipeak_over_tepeak = float(data['tipeak_over_tepeak'])
             self.fuel = int(data['fuel'])
             self.impurityfractions = np.array(data['impurityfractions'], dtype=np.float64)
+            if 'Zeff_target' in data and 'impurity' in data:
+                impurity = int(data['impurity'])
+                self.impurityfractions[impurity] = phys.get_impurity_fraction(data['Zeff_target'], self.impurityfractions[0], impurity, (float(data['Tmax_keV'])-float(data['Tmin_keV']))/2+float(data['Tmin_keV']))
+                print(f"Impurity fractions = {self.impurityfractions} calculated from Zeff_target.")
+
             self.scalinglaw = str(data['scalinglaw'])
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
@@ -945,6 +963,11 @@ class POPCON:
             pass
         
         self.__check_settings()
+        compile_test = POPCON_params()
+        try:
+            compile_test.P_aux_relax_impfrac(1,1,1,1,1)
+        except:
+            pass
 
         pass
     
@@ -1227,7 +1250,7 @@ betaN = {betaN}
         fueldict = {1:'D-D', 2:'D-T', 3:'D-He3'}
 
         ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
-        infoboxtext = f"I_p = {p.Ip:.2f}\nB_0 = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\nkappa = {p.kappa:.2f}\ndelta = {p.delta:.2f}\nM_i = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\nimpurityfractions={p.impurityfractions}"
+        infoboxtext = f"I_p = {p.Ip:.2f}\nB_0 = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\nkappa = {p.kappa:.2f}\ndelta = {p.delta:.2f}\nM_i = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\nZeff av={p.Zeff(np.average(xx)):.2f}"
         ax.text(x=.1,y=.1,s=infoboxtext,va='bottom',bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.7))
 
         if show:
@@ -1308,7 +1331,7 @@ betaN = {betaN}
 
     def __get_geometry(self, i_params) -> None:
         gfile = read_eqdsk(self.settings.gfilename)
-        psin, volgrid, agrid = get_fluxvolumes(gfile)
+        psin, volgrid, agrid, _ = get_fluxvolumes(gfile)
         sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
         volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
 
