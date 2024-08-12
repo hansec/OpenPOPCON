@@ -803,7 +803,7 @@ class POPCON_settings:
             self.delta = float(data['delta'])
             # Ip optional
             # B0 optional
-            if 'B0' in data:
+            if 'B_0' in data:
                 self.B0 = float(data['B_0'])
             elif 'B_coil' in data and 'wall_thickness' in data:
                 self.B0 = phys.get_B0(data['B_coil'], data['wall_thickness'], self.R, self.a)
@@ -1208,7 +1208,7 @@ betaN = {betaN}
             raise ValueError("Invalid y-axis. Change yax in plotsettings.")
         xx, yy = np.meshgrid(xx,yy)
         if names is None:
-            names = ['Paux', 'Pfusion', 'Pfusionheating', 'Pohmic', 'Prad', 'Pheat', 'Ploss', 'Palpha', 'Pdd', 'Pdt', 'tauE', 'Q', 'H89', 'H98', 'vloop', 'betaN', 'n_G_frac', 'n20_max', 'n20_avg', 'T_i_max', 'T_i_avg']
+            names = self.plotsettings.plotoptions.keys()
         for name in names:
             opdict = self.plotsettings.plotoptions[name]
             if opdict['plot'] == False:
