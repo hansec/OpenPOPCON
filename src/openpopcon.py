@@ -1124,6 +1124,12 @@ class POPCON:
         betaN = self.params[i_params].get_BetaN(Ti, n20) # in percent
         pstring = \
 f"""
+Params:
+n_average = {n_G_frac*n_G}
+n_G = {n_G}
+n_axis = {n20}
+Ti_average = {Ti_av}
+Ti_axis = {Ti}
 Solution:
 P_aux = {Paux}
 P_fusion = {Pfusion}
