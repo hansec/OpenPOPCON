@@ -10,7 +10,7 @@ H.-S. Bosch and G.M. Hale 1992.
 TODO: Add D-He3 reaction to cross section / reactivity.
 """
 
-@nb.njit
+@nb.njit(cache=True)
 def get_Zeffs(T_e_keV:float):
 	"""
 	Function to obtain Zeff for each impurity, from Mavrin 2018.
@@ -31,7 +31,7 @@ def get_Zeffs(T_e_keV:float):
 
 	return np.sum(zeff_coeffs*poly, axis=1)
 
-@nb.njit
+@nb.njit(cache=True)
 def get_rads(T_e_keV:float):
 	"""
 	Function to get radiative power Lz per Zeff, from Mavrin 2018.
@@ -50,7 +50,7 @@ def get_rads(T_e_keV:float):
 
 	return np.power(10,np.sum(Lz_coeffs*poly, axis=1))
 
-@nb.njit
+@nb.njit(cache=True)
 def get_coeffs_Zeff(T_e_keV):
 	"""
 	Function to obtain the coefficients for Zeff calculation, from Mavrin 2018.
@@ -167,7 +167,7 @@ def get_coeffs_Zeff(T_e_keV):
 
 	return coeffs
 
-@nb.njit
+@nb.njit(cache=True)
 def get_coeffs_Lz(T_e_keV):
 	"""
 	Function to obtain the coefficients for Lz calculation, from Mavrin 2018.
@@ -286,7 +286,7 @@ def get_coeffs_Lz(T_e_keV):
 
 	return coeffs
 	
-@nb.njit
+@nb.njit(cache=True)
 def get_sigma(T_i_keV, reaction_num):
 
 	"""
@@ -341,7 +341,7 @@ def get_sigma(T_i_keV, reaction_num):
 	S = lambda T: (A1 + T * (A2 + T * (A3 + T * (A4 + T * A5))))/(1+T * (B1 + T * (B2 + T * (B3 + T* B4))))
 	return 0.001*S(T_i_keV) / (T_i_keV* np.exp(B_G / np.sqrt((T_i_keV))))
 
-@nb.njit
+@nb.njit(cache=True)
 def get_reactivity(T_i_keV, reaction_num):
 	"""
 	Reaction cross section in barns (1e-28 m^2), from Hale/Bosch 1992.
