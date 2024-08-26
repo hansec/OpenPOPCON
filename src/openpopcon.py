@@ -309,11 +309,11 @@ class POPCON_params:
         else:
             raise ValueError("Invalid profile ID.")
     
-    def volume_integral(self, rho, profile):
+    def volume_integral(self, rho, func):
         # NOTE: profile must be an array of the same length as rho.
         # Integrates functions of rho dV-like
         V_interp = np.interp(rho, self.sqrtpsin, self.volgrid)
-        return np.trapz(profile, V_interp)
+        return np.trapz(func, V_interp)
     
     #-------------------------------------------------------------------
     # Physical Quantities
