@@ -225,11 +225,11 @@ class POPCON_params:
     # TODO: Impurity profiles
     #-------------------------------------------------------------------
 
-    # BS from Martin H Mode Scaling (Martin et al J. Phys 2008) TODO: Cite
-    # Update from kikuchi?
-    @property
-    def bs_factor(self):
-        return self.B0**(0.8)*(2.*np.pi*self.R * 2*np.pi*self.a * np.sqrt((self.kappa**2+1)/2))**(0.94)
+    # # BS from Martin H Mode Scaling (Martin et al J. Phys 2008) TODO: Cite
+    # # Update from kikuchi?
+    # @property
+    # def bs_factor(self):
+    #     return self.B0**(0.8)*(2.*np.pi*self.R * 2*np.pi*self.a * np.sqrt((self.kappa**2+1)/2))**(0.94)
     
     # n_GR, Greenwald density in 10^20/m^3
     @property
@@ -569,6 +569,7 @@ class POPCON_params:
         Relaxation solver for holding impfrac constant.
         """
         # print(f"Solving T_i =",Ti, "keV, n20 =",n20,"e20 m^-3")
+        
         P_aux_iter = 20.
         P_aux_iter_last = 0.
         dPaux: float
@@ -730,9 +731,9 @@ class POPCON_params:
         else:
             raise ValueError("Invalid profile ID.")
     
-    def _addextprof_imps(self, extprofvals):
-        # TODO: implement this
-        pass
+    # def _addextprof_imps(self, extprofvals):
+    #     # TODO: implement this
+    #     pass
 
     def _setup_profs(self):
         rho = self.sqrtpsin
