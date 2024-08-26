@@ -22,7 +22,7 @@ plotoptions:
         fontsize: 12 # font size for labels
         fmt: '%.2d' # format for the on-contour labels
         spacing: manual # lin, log, or manual spacing for the contour levels
-        manuallevels: [0.1,1,10,100,500,2000] # only used if manual spacing
+        manuallevels: [0.1,1,10,50,100,500,2000] # only used if manual spacing
         scale: minmax # minmax or specified; below not used if manual spacing
         # min : 0.0 # only used if scale is specified
         # max : 1.0 # only used if scale is specified
