@@ -345,6 +345,14 @@ class POPCON_params:
     #         Cspitz = eta1
     #     Cspitz /= 1.6e-16*1.0e20 #unit conversion to keV 10^20 m^-3
     #     return Cspitz
+
+    # def get_eta_spitzer(self, rho, T0, n20):
+    #     # Calculate the Spitzer resistivity in Ohm-m
+    #     # eta_spitzer = 4 sqrt(2pi)/3 Z_eff e^2 sqrt(m_e) ln(Lambda) / (4 pi epsilon_0)^2 T_e^(3/2)
+    #     # Const = 4 sqrt(2pi)/3 * 1.602e-19^2 * 9.109e-31 / ( (4 pi * 8.854e-12)^2 * 1.602e-16^3/2 ) 
+    #     # eta = const*Z_eff*ln(Lambda)*(T_e (keV))^(-3/2)
+    #     return 
+
     
     def get_eta_NC(self, rho, T0, n20):
         # Calculate the neoclassical resistivity in Ohm-m
@@ -383,7 +391,7 @@ class POPCON_params:
         # V_loop = eta_NC*Ip/(2*pi*R)
         r = np.empty(1,dtype=np.float64)
         r[0] = 0.05
-        return (self.get_eta_NC(r, T0, n20)*self.Ip/(2*np.pi*self.R))[0]
+        return (self.get_eta_NC(r, T0, n20)*self.Ip*1e6/(2*np.pi*self.R))[0]
     
     def get_BetaN(self, T0, n20):
         # Calculate the normalized beta
@@ -557,7 +565,7 @@ class POPCON_params:
         """
 
         eta_NC = self.get_eta_NC(rho, T0, n20)
-        J = self.Ip*self.get_extprof(rho, 0)
+        J = self.Ip*1e6*self.get_extprof(rho, 0)
         return eta_NC*J**2
 
     #-------------------------------------------------------------------
@@ -1321,13 +1329,13 @@ betaN = {betaN}
             self.plot_contours(opdict['plot'], ax, data, xx, yy, levels, *plotoptions)
         
         if self.plotsettings.xax == 'T_i_av':
-            ax.set_xlabel('$\langle T_i\rangle$ (keV)')
+            ax.set_xlabel(r'$\langle T_i\rangle$ (keV)')
         elif self.plotsettings.xax == 'T_i_max':
-            ax.set_xlabel('$T_i$ (keV, On-axis)')
+            ax.set_xlabel(r'$T_i$ (keV, On-axis)')
         elif self.plotsettings.xax == 'T_e_av':
-            ax.set_xlabel('$\langle T_e\rangle$ (keV)')
+            ax.set_xlabel(r'$\langle T_e\rangle$ (keV)')
         elif self.plotsettings.xax == 'T_e_max':
-            ax.set_xlabel('$T_e$ (keV, On-axis)')
+            ax.set_xlabel(r'$T_e$ (keV, On-axis)')
         else:
             pass
         
