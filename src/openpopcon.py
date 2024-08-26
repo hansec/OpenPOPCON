@@ -1320,7 +1320,17 @@ betaN = {betaN}
                 
             self.plot_contours(opdict['plot'], ax, data, xx, yy, levels, *plotoptions)
         
-        ax.set_xlabel('$T_i$ (keV)')
+        if self.plotsettings.xax == 'T_i_av':
+            ax.set_xlabel('$\langle T_i\rangle$ (keV)')
+        elif self.plotsettings.xax == 'T_i_max':
+            ax.set_xlabel('$T_i$ (keV, On-axis)')
+        elif self.plotsettings.xax == 'T_e_av':
+            ax.set_xlabel('$\langle T_e\rangle$ (keV)')
+        elif self.plotsettings.xax == 'T_e_max':
+            ax.set_xlabel('$T_e$ (keV, On-axis)')
+        else:
+            pass
+        
         if self.plotsettings.yax == 'n20':
             ax.set_ylabel(r'$n_{20}$ ($10^{20} m^{-3}$)')
         elif self.plotsettings.yax == 'nG':
