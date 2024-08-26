@@ -831,6 +831,60 @@ class POPCON_settings:
             self.scalinglaw = str(data['scalinglaw'])
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
+            if 'gfilename' in data:
+                self.gfilename = str(data['gfilename'])
+            else:
+                self.gfilename = ''
+            if 'profsfilename' in data:
+                self.profsfilename = str(data['profsfilename'])
+            else:
+                self.profsfilename = ''
+
+            if 'j_alpha1' in data:
+                self.j_alpha1 = float(data['j_alpha1'])
+                self.j_alpha2 = float(data['j_alpha2'])
+                self.j_offset = float(data['j_offset'])
+            else:
+                self.j_alpha1 = 1.
+                self.j_alpha2 = 2.
+                self.j_offset = 0
+            
+            if 'ne_alpha1' in data:
+                self.ne_alpha1 = float(data['ne_alpha1'])
+                self.ne_alpha2 = float(data['ne_alpha2'])
+                self.ne_offset = float(data['ne_offset'])
+            else:
+                self.ne_alpha1 = 2.
+                self.ne_alpha2 = 1.5
+                self.ne_offset = 0
+
+            if 'ni_alpha1' in data:
+                self.ni_alpha1 = float(data['ni_alpha1'])
+                self.ni_alpha2 = float(data['ni_alpha2'])
+                self.ni_offset = float(data['ni_offset'])
+            else:
+                self.ni_alpha1 = 2.
+                self.ni_alpha2 = 1.5
+                self.ni_offset = 0
+            
+            if 'Ti_alpha1' in data:
+                self.Ti_alpha1 = float(data['Ti_alpha1'])
+                self.Ti_alpha2 = float(data['Ti_alpha2'])
+                self.Ti_offset = float(data['Ti_offset'])
+            else:
+                self.Ti_alpha1 = 2.
+                self.Ti_alpha2 = 1.5
+                self.Ti_offset = 0
+            
+            if 'Te_alpha1' in data:
+                self.Te_alpha1 = float(data['Te_alpha1'])
+                self.Te_alpha2 = float(data['Te_alpha2'])
+                self.Te_offset = float(data['Te_offset'])
+            else:
+                self.Te_alpha1 = 2.
+                self.Te_alpha2 = 1.5
+                self.Te_offset = 0
+
             
 
             #-----------------------------------------------------------
@@ -838,8 +892,6 @@ class POPCON_settings:
             #-----------------------------------------------------------
             self.Nn = int(data['Nn'])
             self.NTi = int(data['NTi'])
-            self.gfilename = str(data['gfilename'])
-            self.profsfilename = str(data['profsfilename'])
             self.nmax_frac = float(data['nmax_frac'])
             self.nmin_frac = float(data['nmin_frac'])
             self.Tmax_keV = float(data['Tmax_keV'])
@@ -860,6 +912,8 @@ class POPCON_settings:
     ('n20_avg', nb.float64[:]),
     ('T_i_max', nb.float64[:]),
     ('T_i_avg', nb.float64[:]),
+    ('T_e_max', nb.float64[:]),
+    ('T_e_avg', nb.float64[:]),
     ('Paux', nb.float64[:,:]),
     ('Pfusion', nb.float64[:,:]),
     ('Pfusionheating', nb.float64[:,:]),
@@ -888,6 +942,8 @@ class POPCON_data:
         self.n20_avg: np.ndarray
         self.T_i_max: np.ndarray
         self.T_i_avg: np.ndarray
+        self.T_e_max: np.ndarray
+        self.T_e_avg: np.ndarray
         self.Paux: np.ndarray
         self.Pfusion: np.ndarray
         self.Pfusionheating: np.ndarray
@@ -916,6 +972,7 @@ class POPCON_plotsettings:
         self.plotoptions: dict
         self.figsize: tuple = (8,6)
         self.yax: str = 'nG'
+        self.xax: str = 'T_i_av'
 
         self.read(filename)
 
@@ -929,6 +986,7 @@ class POPCON_plotsettings:
         self.plotoptions = data['plotoptions']
         self.figsize = tuple(data['figsize'])
         self.yax = data['yax']
+        self.xax = data['xax']
         
         pass
 
@@ -980,10 +1038,14 @@ class POPCON:
         self.__setup_params()
         if self.settings.gfilename == '':
             self.params[-1]._addextprof(np.linspace(0.001,1,self.settings.nr),-2)
+            self.params[-1]._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
         else:
             self.__get_geometry(-1)
         if self.settings.profsfilename == '':
-            pass
+            self.params[-1]._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
+            self.params[-1]._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
+            self.params[-1]._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
+            self.params[-1]._set_alpha_and_offset(self.settings.Te_alpha1, self.settings.Te_alpha2, self.settings.Te_offset, 4)
         else:
             self.__get_profiles(-1)
 
@@ -1057,16 +1119,20 @@ class POPCON:
             params = self.params[i_params]
             n_G = params.n_GR
             n_average = params.volume_integral(params.sqrtpsin, params.extprof_ni)/params.V
-            T_average = params.volume_integral(params.sqrtpsin, params.extprof_Ti)/params.V
+            Ti_average = params.volume_integral(params.sqrtpsin, params.extprof_Ti)/params.V
+            Te_average = params.volume_integral(params.sqrtpsin, params.extprof_Te)/params.V
             ni = np.linspace(self.settings.nmin_frac*n_G/n_average, self.settings.nmax_frac*n_G/n_average, self.settings.Nn)
-            Ti = np.linspace(self.settings.Tmin_keV/T_average, self.settings.Tmax_keV/T_average, self.settings.NTi)
+            Ti = np.linspace(self.settings.Tmin_keV/Ti_average, self.settings.Tmax_keV/Ti_average, self.settings.NTi)
+            Te = Ti/self.settings.tipeak_over_tepeak
 
             result = POPCON_data()
             result.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
             result.n20_max = ni
             result.n20_avg = ni * n_average
             result.T_i_max = Ti
-            result.T_i_avg = Ti * T_average
+            result.T_i_avg = Ti * Ti_average
+            result.T_e_max = Te
+            result.T_e_avg = Te * Te_average
             
             Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
                                     ni, Ti, self.settings.accel, 
@@ -1206,7 +1272,17 @@ betaN = {betaN}
     def plot(self, i_params:int, show:bool=True, names=None) -> None:
         figsize = self.plotsettings.figsize
         fig, ax = plt.subplots(figsize=figsize)
-        xx = self.outputs[i_params].T_i_avg
+        if self.plotsettings.xax == 'T_i_av':
+            xx = self.outputs[i_params].T_i_avg
+        elif self.plotsettings.xax == 'T_i_max':
+            xx = self.outputs[i_params].T_i_max
+        elif self.plotsettings.xax == 'T_e_av':
+            xx = self.outputs[i_params].T_e_avg
+        elif self.plotsettings.xax == 'T_e_max':
+            xx = self.outputs[i_params].T_e_max
+        else:
+            raise ValueError("Invalid x-axis. Change xax in plotsettings.")
+        
         if self.plotsettings.yax == 'n20':
             yy = self.outputs[i_params].n20_avg
         elif self.plotsettings.yax == 'nG':

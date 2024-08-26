@@ -23,9 +23,11 @@ B_coil: 24.0 # magnetic field at the coil in Tesla
 wall_thickness: 1.1 # wall thickness between magnet and separatrix in meters
 #----------------------
 
+#----------------------
 M_i: 2.5 # average ion mass in amu
 tipeak_over_tepeak: 1.0 # ratio of ion to electron temperature at peak
 fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
+#----------------------
 
 #----------------------
 # Impurity Fractions
@@ -43,17 +45,48 @@ Zeff_target: 2.1 # average effective charge of plasma
 impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
 #----------------------
 
+#----------------------
 scalinglaw: "H_NT23" # Name of tau_E scaling law as defined in scaling_laws.yaml
 H_fac: 1.0 # Factor by which to multiply the scaling law
 nr: 100 # number of radial grid points
+#----------------------
+
+#----------------------
+# Profiles
+# If you specify a filename, the profiles will be read from that file and normalized.
+# Otherwise, the normalized profiles will be parabolic of the form
+# f(r) = (1 - offset)*(1 - r**alpha1)**alpha2 + offset
+# j profile comes from the equilibrium, the others come from the profs file.
+gfilename: "./resources/examples/MANTA/gMANTA"
+profsfilename: "./resources/examples/MANTA/profsMANTA.csv"
+
+# j_alpha1: 2.
+# j_alpha2: 3.
+# j_offset: 0.
+
+# ne_alpha1: 2.
+# ne_alpha2: 1.5
+# ne_offset: 0.
+
+# ni_alpha1: 2.
+# ni_alpha2: 1.5
+# ni_offset: 0.
+
+# Ti_alpha1: 2.
+# Ti_alpha2: 1.5
+# Ti_offset: 0.
+
+# Te_alpha1: 2.
+# Te_alpha2: 1.5
+# Te_offset: 0.
+#----------------------
+
 
 #----------------------
 # Algorithm settings
 #----------------------
 Nn: 20 # resolution of densities
 NTi: 20 # resolution of ion temperatures
-gfilename: "./resources/examples/MANTA/gMANTA"
-profsfilename: "./resources/examples/MANTA/profsMANTA.csv"
 nmax_frac: 1.2 # maximum density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
 Tmax_keV: 11. # maximum volume-averaged temperature in keV
