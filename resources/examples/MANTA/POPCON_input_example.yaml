@@ -10,22 +10,22 @@ delta: -0.5 # triangularity
 
 #----------------------
 # I_P and q* can be calculated from each other. Pick one to specify:
-# I_P: 10. # plasma current in MA
+I_P: 10. # plasma current in MA
 # or
-qstar: 2.5
+# qstar: 2.5
 #----------------------
 
 #----------------------
 # B_0 and B_coil can be calculated from each other. Pick one to specify:
-# B_0: 11.0 # on-axis magnetic field in Tesla
+B_0: 11.0 # on-axis magnetic field in Tesla
 # or
-B_coil: 24.0 # magnetic field at the coil in Tesla
-wall_thickness: 1.1 # wall thickness between magnet and separatrix in meters
+# B_coil: 24.0 # magnetic field at the coil in Tesla
+# wall_thickness: 1.1 # wall thickness between magnet and separatrix in meters
 #----------------------
 
 #----------------------
 M_i: 2.5 # average ion mass in amu
-tipeak_over_tepeak: 1.0 # ratio of ion to electron temperature at peak
+tipeak_over_tepeak: 1.1 # ratio of ion to electron temperature at peak
 fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
 #----------------------
 
@@ -91,8 +91,8 @@ nmax_frac: 1.2 # maximum density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
 Tmax_keV: 11. # maximum volume-averaged temperature in keV
 Tmin_keV: 3 # minimum volume-averaged temperature in keV
-maxit: 1000 # maximum number of iterations
-accel: 1.1 # acceleration factor
+maxit: 100000 # maximum number of iterations
+accel: 1.5 # acceleration factor
 err: 1e-6 # error tolerance
 verbosity: 1 # 0 for no output, 1 for minimal output, 2 for verbose output
 parallel: False
