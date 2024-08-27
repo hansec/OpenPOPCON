@@ -370,8 +370,14 @@ class POPCON_params:
         Zeffprof = np.empty_like(T_e_r)
         for i in np.arange(T_e_r.shape[0]):
             Zeffprof[i] = self.Zeff(T_e_r[i])
-        logLambda = 17.1-np.log(np.sqrt(n_e_r)/(T_e_r*1e3))
-        eta_C = 1.03e-4 * logLambda * T_e_r**(-3/2)
+        # logLambda = 17.1-np.log(np.sqrt(n_e_r)/(T_e_r*1e3)) # From Jardin
+        logLambda = np.empty_like(Zeffprof)
+        where = T_e_r*1e3>10*Zeffprof**2
+        elsewhere = np.logical_not(where)
+        logLambda[where] = 24 - np.log(np.sqrt(n_e_r)/(T_e_r*1e3))[where] # Plasma Formulary
+        logLambda[elsewhere] = 23 - np.log(np.sqrt(n_e_r)*Zeffprof/(T_e_r*1e3)**(3/2))[elsewhere] # Plasma Formulary
+        logLambda[logLambda<5] = 5
+        eta_C = 1.03e-4 * logLambda * (T_e_r*1e3)**(-3/2)
 
         Lambda_E = 3.4/Zeffprof * (1.13 + Zeffprof) / (2.67 + Zeffprof)
         C_R = 0.56/Zeffprof * (3.0 - Zeffprof) / (3.0 + Zeffprof)
@@ -379,19 +385,18 @@ class POPCON_params:
         invaspect = self.a/self.R
         f_t = np.sqrt(2*rho*invaspect) # TODO: Replace with Jardin formula
 
-        nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * T_e_r**2)
+        nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
 
         eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
-
         eta_NC = eta_C / eta_C_eta_NC_ratio
         return eta_NC
     
     def get_Vloop(self, T0, n20):
         # Calculate the loop voltage at ~plasma center
-        # V_loop = eta_NC*Ip/(2*pi*R)
-        r = np.empty(1,dtype=np.float64)
-        r[0] = 0.05
-        return (self.get_eta_NC(r, T0, n20)*self.Ip*1e6/(2*np.pi*self.R))[0]
+        # V_loop = P_ohmic / Ip
+        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T0, n20))
+        return P_OH/self.Ip
+        
     
     def get_BetaN(self, T0, n20):
         # Calculate the normalized beta
@@ -566,7 +571,7 @@ class POPCON_params:
 
         eta_NC = self.get_eta_NC(rho, T0, n20)
         J = self.Ip*1e6*self.get_extprof(rho, 0)
-        return eta_NC*J**2
+        return 1e-6*eta_NC*J**2
 
     #-------------------------------------------------------------------
     # Power Balance Relaxation Solvers
@@ -1452,8 +1457,9 @@ betaN = {betaN}
         J = np.sqrt(Jpol**2 + Jtor**2)
         psiJ = np.linspace(0,1,J.shape[0])
         Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
+        Jr = Jr/Jr[0]
         Ipint = np.trapz(Jr,2*np.pi*(self.params[-1].a*sqrtpsin)**2)
-        Jr = Jr/Ipint
+        Jr = np.abs(Jr/Ipint)
 
         self.params[i_params]._addextprof(sqrtpsin,-2)
         self.params[i_params]._addextprof(volgrid,-1)
