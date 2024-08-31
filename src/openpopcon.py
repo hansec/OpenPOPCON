@@ -752,11 +752,16 @@ class POPCON_params:
         rho = self.sqrtpsin
         if not self.rdefined:
             raise ValueError("Geometry profile not defined.")
+        if not self.agriddefined:
+            w07 = 1.
+            Lp = 2*np.pi*self.a*(1+0.55*(self.kappa - 1))*(1+0.08*self.delta**2)*(1+0.2*(w07-1))
+            epsilon = rho*self.a/self.R
+            self.agrid = 2*np.pi*self.R*(1-0.32*self.delta*epsilon)*Lp # Sauter eqs 36
         if not self.volgriddefined:
             epsilon = rho*self.a/self.R
             w07 = 1.0
             S_phi = np.pi*((rho*self.a)**2)*self.kappa*(1+0.52*(w07-1))
-            self.volgrid = 2*np.pi*self.R*(1-0.25*self.delta*epsilon)*S_phi
+            self.volgrid = 2*np.pi*self.R*(1-0.25*self.delta*epsilon)*S_phi # Sauter eqs 36
             self.volgriddefined = True
         if not self._jdefined:
             self.extprof_j = (1-self.j_offset)*(1-rho**self.j_alpha1)**self.j_alpha2 + self.j_offset
@@ -1050,8 +1055,10 @@ class POPCON:
     def single_popcon(self, plot: bool = True, show: bool = True) -> None:
         self.__setup_params()
         if self.settings.gfilename == '':
-            self.params[-1]._addextprof(np.linspace(0.001,1,self.settings.nr),-2)
+            rho = np.linspace(0.001,1,self.settings.nr)
+            self.params[-1]._addextprof(rho,-2)
             self.params[-1]._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
+            
         else:
             self.__get_geometry(-1)
         if self.settings.profsfilename == '':
@@ -1214,7 +1221,7 @@ Solution:
 P_aux = {Paux}
 P_fusion = {Pfusion}
 P_SOL = {Ploss - Prad}
-P_load = {(Ploss-Prad)/self.params[i_params].A}
+P_load = {(Ploss-Prad)/self.params[i_params].agrid[-1]}
 P_ohmic = {Pohmic}
 P_rad = {Prad}
 P_heat = {Pheat}
@@ -1287,17 +1294,19 @@ betaN = {betaN}
         fig, ax = plt.subplots(figsize=figsize)
         if self.plotsettings.xax == 'T_i_av':
             xx = self.outputs[i_params].T_i_avg
-        elif self.plotsettings.xax == 'T_i_max':
+        elif self.plotsettings.xax == 'T_i_ax':
             xx = self.outputs[i_params].T_i_max
         elif self.plotsettings.xax == 'T_e_av':
             xx = self.outputs[i_params].T_e_avg
-        elif self.plotsettings.xax == 'T_e_max':
+        elif self.plotsettings.xax == 'T_e_ax':
             xx = self.outputs[i_params].T_e_max
         else:
             raise ValueError("Invalid x-axis. Change xax in plotsettings.")
         
-        if self.plotsettings.yax == 'n20':
+        if self.plotsettings.yax == 'n20_av':
             yy = self.outputs[i_params].n20_avg
+        elif self.plotsettings.yax == 'n20_ax':
+            yy = self.outputs[i_params].n20_max
         elif self.plotsettings.yax == 'nG':
             yy = self.outputs[i_params].n_G_frac
         else:
@@ -1335,19 +1344,21 @@ betaN = {betaN}
         
         if self.plotsettings.xax == 'T_i_av':
             ax.set_xlabel(r'$\langle T_i\rangle$ (keV)')
-        elif self.plotsettings.xax == 'T_i_max':
+        elif self.plotsettings.xax == 'T_i_ax':
             ax.set_xlabel(r'$T_i$ (keV, On-axis)')
         elif self.plotsettings.xax == 'T_e_av':
             ax.set_xlabel(r'$\langle T_e\rangle$ (keV)')
-        elif self.plotsettings.xax == 'T_e_max':
+        elif self.plotsettings.xax == 'T_e_ax':
             ax.set_xlabel(r'$T_e$ (keV, On-axis)')
         else:
             pass
         
-        if self.plotsettings.yax == 'n20':
-            ax.set_ylabel(r'$n_{20}$ ($10^{20} m^{-3}$)')
+        if self.plotsettings.yax == 'n20_av':
+            ax.set_ylabel(r'$\langle n_{20}\rangle$ ($10^{20} m^{-3}$)')
+        elif self.plotsettings.yax == 'n20_ax':
+            ax.set_ylabel(r'$n_{20}(0)$')
         elif self.plotsettings.yax == 'nG':
-            ax.set_ylabel(r'$n/n_G$')
+            ax.set_ylabel(r'$\langle n\rangle /n_G$')
         else:
             pass
         p = self.params[i_params]
