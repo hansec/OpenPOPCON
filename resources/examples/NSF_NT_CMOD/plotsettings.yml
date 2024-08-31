@@ -1,0 +1,305 @@
+#-----------------------------------------------------------------------
+# OpenPOPCON Plotting Settings
+#-----------------------------------------------------------------------
+
+yax: "n20_ax" # y-axis variable; nG for greenwald fraction, n20_ax for density
+xax: "T_i_ax" # x-axis variable; T_i_av for average ion temperature, 
+              #                  T_i_ax for maximum ion temperature,
+              #                  T_e_av for average electron temperature,
+              #                  T_e_ax for maximum electron temperature
+figsize: [8, 6] # figure size in inches
+
+#----------------------
+# Options per output
+#----------------------
+
+plotoptions: 
+    Paux: 
+        plot: True # do not plot this output
+        color: r # line color
+        linewidth: 3 # line width
+        label: $P_{aux}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2d' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [0.1,1,10,50,100,500,2000] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Pfusion: 
+        plot: True # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{fus}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2d' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [100,200,500,1000,2000,4000] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Pfusionheating: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{fus}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2d' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [100,200,500,1000,2000,4000] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Psol:
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{SOL}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2d' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [10,20,50,80,100] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Pohmic: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{OH}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [0.01,0.1,0.2,0.5,1.] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Prad: 
+        plot: True # do not plot this output
+        color: purple # line color
+        linewidth: 2 # line width
+        label: $P_{rad}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2d' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [10,50,100,200] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 3 # number of contour levels
+    Pheat: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{heat}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Ploss: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{loss}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Palpha: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{\alpha}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Pdd: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{DD}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Pdt: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $P_{DT}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    tauE: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $\tau_E$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    Q: 
+        plot: True # do not plot this output
+        color: orange # line color
+        linewidth: 2 # line width
+        label: $Q$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.f' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [0.5,1,2,5,10,25,50,100] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        min : -1 # only used if scale is specified
+        max : 2 # only used if scale is specified
+        levels: 4 # number of contour levels
+    H89: 
+        plot: False # do not plot this output
+        color: blue # line color
+        linewidth: 2 # line width
+        label: $H_{89}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    H98: 
+        plot: True # do not plot this output
+        color: blue # line color
+        linewidth: 2 # line width
+        label: $H_{98y2}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.1f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 5 # number of contour levels
+    vloop: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $V_{loop}$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    betaN: 
+        plot: True # do not plot this output
+        color: forestgreen # line color
+        linewidth: 2 # line width
+        label: $\beta_N$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.d' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [1,2,3] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 5 # number of contour levels
+    n_G_frac: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $n_G$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    n20_max: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $n_{i20}(0)$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    n20_avg: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $\langle n_{i20}\rangle$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    T_i_max: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $T_i(0)$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    T_i_avg: 
+        plot: False # do not plot this output
+        color: k # line color
+        linewidth: 2 # line width
+        label: $\langle T_i \rangle$ # label for the line
+        fontsize: 12 # font size for labels
+        fmt: '%.2f' # format for the on-contour labels
+        spacing: lin # lin, log, or manual spacing for the contour levels
+        manuallevels: [] # only used if manual spacing
+        scale: minmax # minmax or specified; below not used if manual spacing
+        # min : 0.0 # only used if scale is specified
+        # max : 1.0 # only used if scale is specified
+        levels: 10 # number of contour levels
+    
+
+

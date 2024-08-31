@@ -3,6 +3,10 @@
 #-----------------------------------------------------------------------
 
 yax: "nG" # y-axis variable; nG for greenwald fraction, n20 for density
+xax: "T_i_av" # x-axis variable; T_i_av for average ion temperature, 
+              #                  T_i_ax for maximum ion temperature,
+              #                  T_e_av for average electron temperature,
+              #                  T_e_ax for maximum electron temperature
 figsize: [8, 6] # figure size in inches
 
 #----------------------
@@ -18,7 +22,7 @@ plotoptions:
         fontsize: 12 # font size for labels
         fmt: '%.2d' # format for the on-contour labels
         spacing: manual # lin, log, or manual spacing for the contour levels
-        manuallevels: [0.1,1,10,100,500,2000] # only used if manual spacing
+        manuallevels: [0.1,1,10,50,100,500,2000] # only used if manual spacing
         scale: minmax # minmax or specified; below not used if manual spacing
         # min : 0.0 # only used if scale is specified
         # max : 1.0 # only used if scale is specified
@@ -66,11 +70,11 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $P_{OH}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
-        spacing: lin # lin, log, or manual spacing for the contour levels
-        manuallevels: [] # only used if manual spacing
+        spacing: manual # lin, log, or manual spacing for the contour levels
+        manuallevels: [0.01,0.1,0.2,0.5,1.] # only used if manual spacing
         scale: minmax # minmax or specified; below not used if manual spacing
         # min : 0.0 # only used if scale is specified
         # max : 1.0 # only used if scale is specified
@@ -92,7 +96,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $P_{heat}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -105,7 +109,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $P_{loss}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -118,7 +122,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $P_{\alpha}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -131,7 +135,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $P_{DD}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -144,7 +148,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $P_{DT}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -157,7 +161,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $\tau_E$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -174,16 +178,16 @@ plotoptions:
         fontsize: 12 # font size for labels
         fmt: '%.f' # format for the on-contour labels
         spacing: manual # lin, log, or manual spacing for the contour levels
-        manuallevels: [0.5,1,2,5,10,50,100] # only used if manual spacing
+        manuallevels: [0.5,1,2,5,10,25,50,100] # only used if manual spacing
         scale: minmax # minmax or specified; below not used if manual spacing
         min : -1 # only used if scale is specified
         max : 2 # only used if scale is specified
         levels: 4 # number of contour levels
     H89: 
         plot: False # do not plot this output
-        color: k # line color
+        color: blue # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $H_{89}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -209,7 +213,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $V_{loop}$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: manual # lin, log, or manual spacing for the contour levels
@@ -248,7 +252,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $n_{i20}(0)$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -261,7 +265,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $\langle n_{i20}\rangle$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -274,7 +278,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $T_i(0)$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels
@@ -287,7 +291,7 @@ plotoptions:
         plot: False # do not plot this output
         color: k # line color
         linewidth: 2 # line width
-        label: $n_G$ # label for the line
+        label: $\langle T_i \rangle$ # label for the line
         fontsize: 12 # font size for labels
         fmt: '%.2f' # format for the on-contour labels
         spacing: lin # lin, log, or manual spacing for the contour levels

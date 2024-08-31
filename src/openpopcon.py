@@ -345,6 +345,14 @@ class POPCON_params:
     #         Cspitz = eta1
     #     Cspitz /= 1.6e-16*1.0e20 #unit conversion to keV 10^20 m^-3
     #     return Cspitz
+
+    # def get_eta_spitzer(self, rho, T0, n20):
+    #     # Calculate the Spitzer resistivity in Ohm-m
+    #     # eta_spitzer = 4 sqrt(2pi)/3 Z_eff e^2 sqrt(m_e) ln(Lambda) / (4 pi epsilon_0)^2 T_e^(3/2)
+    #     # Const = 4 sqrt(2pi)/3 * 1.602e-19^2 * 9.109e-31 / ( (4 pi * 8.854e-12)^2 * 1.602e-16^3/2 ) 
+    #     # eta = const*Z_eff*ln(Lambda)*(T_e (keV))^(-3/2)
+    #     return 
+
     
     def get_eta_NC(self, rho, T0, n20):
         # Calculate the neoclassical resistivity in Ohm-m
@@ -362,8 +370,14 @@ class POPCON_params:
         Zeffprof = np.empty_like(T_e_r)
         for i in np.arange(T_e_r.shape[0]):
             Zeffprof[i] = self.Zeff(T_e_r[i])
-        logLambda = 17.1-np.log(np.sqrt(n_e_r)/(T_e_r*1e3))
-        eta_C = 1.03e-4 * logLambda * T_e_r**(-3/2)
+        # logLambda = 17.1-np.log(np.sqrt(n_e_r)/(T_e_r*1e3)) # From Jardin
+        logLambda = np.empty_like(Zeffprof)
+        where = T_e_r*1e3>10*Zeffprof**2
+        elsewhere = np.logical_not(where)
+        logLambda[where] = 24 - np.log(np.sqrt(n_e_r)/(T_e_r*1e3))[where] # Plasma Formulary
+        logLambda[elsewhere] = 23 - np.log(np.sqrt(n_e_r)*Zeffprof/(T_e_r*1e3)**(3/2))[elsewhere] # Plasma Formulary
+        logLambda[logLambda<5] = 5
+        eta_C = 1.03e-4 * logLambda * (T_e_r*1e3)**(-3/2)
 
         Lambda_E = 3.4/Zeffprof * (1.13 + Zeffprof) / (2.67 + Zeffprof)
         C_R = 0.56/Zeffprof * (3.0 - Zeffprof) / (3.0 + Zeffprof)
@@ -371,19 +385,18 @@ class POPCON_params:
         invaspect = self.a/self.R
         f_t = np.sqrt(2*rho*invaspect) # TODO: Replace with Jardin formula
 
-        nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * T_e_r**2)
+        nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
 
         eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
-
         eta_NC = eta_C / eta_C_eta_NC_ratio
         return eta_NC
     
     def get_Vloop(self, T0, n20):
         # Calculate the loop voltage at ~plasma center
-        # V_loop = eta_NC*Ip/(2*pi*R)
-        r = np.empty(1,dtype=np.float64)
-        r[0] = 0.05
-        return (self.get_eta_NC(r, T0, n20)*self.Ip/(2*np.pi*self.R))[0]
+        # V_loop = P_ohmic / Ip
+        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T0, n20))
+        return P_OH/self.Ip
+        
     
     def get_BetaN(self, T0, n20):
         # Calculate the normalized beta
@@ -557,8 +570,8 @@ class POPCON_params:
         """
 
         eta_NC = self.get_eta_NC(rho, T0, n20)
-        J = self.Ip*self.get_extprof(rho, 0)
-        return eta_NC*J**2
+        J = self.Ip*1e6*self.get_extprof(rho, 0)
+        return 1e-6*eta_NC*J**2
 
     #-------------------------------------------------------------------
     # Power Balance Relaxation Solvers
@@ -739,11 +752,16 @@ class POPCON_params:
         rho = self.sqrtpsin
         if not self.rdefined:
             raise ValueError("Geometry profile not defined.")
+        if not self.agriddefined:
+            w07 = 1.
+            Lp = 2*np.pi*self.a*(1+0.55*(self.kappa - 1))*(1+0.08*self.delta**2)*(1+0.2*(w07-1))
+            epsilon = rho*self.a/self.R
+            self.agrid = 2*np.pi*self.R*(1-0.32*self.delta*epsilon)*Lp # Sauter eqs 36
         if not self.volgriddefined:
             epsilon = rho*self.a/self.R
             w07 = 1.0
             S_phi = np.pi*((rho*self.a)**2)*self.kappa*(1+0.52*(w07-1))
-            self.volgrid = 2*np.pi*self.R*(1-0.25*self.delta*epsilon)*S_phi
+            self.volgrid = 2*np.pi*self.R*(1-0.25*self.delta*epsilon)*S_phi # Sauter eqs 36
             self.volgriddefined = True
         if not self._jdefined:
             self.extprof_j = (1-self.j_offset)*(1-rho**self.j_alpha1)**self.j_alpha2 + self.j_offset
@@ -831,6 +849,60 @@ class POPCON_settings:
             self.scalinglaw = str(data['scalinglaw'])
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
+            if 'gfilename' in data:
+                self.gfilename = str(data['gfilename'])
+            else:
+                self.gfilename = ''
+            if 'profsfilename' in data:
+                self.profsfilename = str(data['profsfilename'])
+            else:
+                self.profsfilename = ''
+
+            if 'j_alpha1' in data:
+                self.j_alpha1 = float(data['j_alpha1'])
+                self.j_alpha2 = float(data['j_alpha2'])
+                self.j_offset = float(data['j_offset'])
+            else:
+                self.j_alpha1 = 1.
+                self.j_alpha2 = 2.
+                self.j_offset = 0
+            
+            if 'ne_alpha1' in data:
+                self.ne_alpha1 = float(data['ne_alpha1'])
+                self.ne_alpha2 = float(data['ne_alpha2'])
+                self.ne_offset = float(data['ne_offset'])
+            else:
+                self.ne_alpha1 = 2.
+                self.ne_alpha2 = 1.5
+                self.ne_offset = 0
+
+            if 'ni_alpha1' in data:
+                self.ni_alpha1 = float(data['ni_alpha1'])
+                self.ni_alpha2 = float(data['ni_alpha2'])
+                self.ni_offset = float(data['ni_offset'])
+            else:
+                self.ni_alpha1 = 2.
+                self.ni_alpha2 = 1.5
+                self.ni_offset = 0
+            
+            if 'Ti_alpha1' in data:
+                self.Ti_alpha1 = float(data['Ti_alpha1'])
+                self.Ti_alpha2 = float(data['Ti_alpha2'])
+                self.Ti_offset = float(data['Ti_offset'])
+            else:
+                self.Ti_alpha1 = 2.
+                self.Ti_alpha2 = 1.5
+                self.Ti_offset = 0
+            
+            if 'Te_alpha1' in data:
+                self.Te_alpha1 = float(data['Te_alpha1'])
+                self.Te_alpha2 = float(data['Te_alpha2'])
+                self.Te_offset = float(data['Te_offset'])
+            else:
+                self.Te_alpha1 = 2.
+                self.Te_alpha2 = 1.5
+                self.Te_offset = 0
+
             
 
             #-----------------------------------------------------------
@@ -838,8 +910,6 @@ class POPCON_settings:
             #-----------------------------------------------------------
             self.Nn = int(data['Nn'])
             self.NTi = int(data['NTi'])
-            self.gfilename = str(data['gfilename'])
-            self.profsfilename = str(data['profsfilename'])
             self.nmax_frac = float(data['nmax_frac'])
             self.nmin_frac = float(data['nmin_frac'])
             self.Tmax_keV = float(data['Tmax_keV'])
@@ -860,6 +930,8 @@ class POPCON_settings:
     ('n20_avg', nb.float64[:]),
     ('T_i_max', nb.float64[:]),
     ('T_i_avg', nb.float64[:]),
+    ('T_e_max', nb.float64[:]),
+    ('T_e_avg', nb.float64[:]),
     ('Paux', nb.float64[:,:]),
     ('Pfusion', nb.float64[:,:]),
     ('Pfusionheating', nb.float64[:,:]),
@@ -888,6 +960,8 @@ class POPCON_data:
         self.n20_avg: np.ndarray
         self.T_i_max: np.ndarray
         self.T_i_avg: np.ndarray
+        self.T_e_max: np.ndarray
+        self.T_e_avg: np.ndarray
         self.Paux: np.ndarray
         self.Pfusion: np.ndarray
         self.Pfusionheating: np.ndarray
@@ -916,6 +990,7 @@ class POPCON_plotsettings:
         self.plotoptions: dict
         self.figsize: tuple = (8,6)
         self.yax: str = 'nG'
+        self.xax: str = 'T_i_av'
 
         self.read(filename)
 
@@ -929,6 +1004,7 @@ class POPCON_plotsettings:
         self.plotoptions = data['plotoptions']
         self.figsize = tuple(data['figsize'])
         self.yax = data['yax']
+        self.xax = data['xax']
         
         pass
 
@@ -979,11 +1055,17 @@ class POPCON:
     def single_popcon(self, plot: bool = True, show: bool = True) -> None:
         self.__setup_params()
         if self.settings.gfilename == '':
-            self.params[-1]._addextprof(np.linspace(0.001,1,self.settings.nr),-2)
+            rho = np.linspace(0.001,1,self.settings.nr)
+            self.params[-1]._addextprof(rho,-2)
+            self.params[-1]._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
+            
         else:
             self.__get_geometry(-1)
         if self.settings.profsfilename == '':
-            pass
+            self.params[-1]._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
+            self.params[-1]._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
+            self.params[-1]._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
+            self.params[-1]._set_alpha_and_offset(self.settings.Te_alpha1, self.settings.Te_alpha2, self.settings.Te_offset, 4)
         else:
             self.__get_profiles(-1)
 
@@ -1057,16 +1139,20 @@ class POPCON:
             params = self.params[i_params]
             n_G = params.n_GR
             n_average = params.volume_integral(params.sqrtpsin, params.extprof_ni)/params.V
-            T_average = params.volume_integral(params.sqrtpsin, params.extprof_Ti)/params.V
+            Ti_average = params.volume_integral(params.sqrtpsin, params.extprof_Ti)/params.V
+            Te_average = params.volume_integral(params.sqrtpsin, params.extprof_Te)/params.V
             ni = np.linspace(self.settings.nmin_frac*n_G/n_average, self.settings.nmax_frac*n_G/n_average, self.settings.Nn)
-            Ti = np.linspace(self.settings.Tmin_keV/T_average, self.settings.Tmax_keV/T_average, self.settings.NTi)
+            Ti = np.linspace(self.settings.Tmin_keV/Ti_average, self.settings.Tmax_keV/Ti_average, self.settings.NTi)
+            Te = Ti/self.settings.tipeak_over_tepeak
 
             result = POPCON_data()
             result.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
             result.n20_max = ni
             result.n20_avg = ni * n_average
             result.T_i_max = Ti
-            result.T_i_avg = Ti * T_average
+            result.T_i_avg = Ti * Ti_average
+            result.T_e_max = Te
+            result.T_e_avg = Te * Te_average
             
             Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
                                     ni, Ti, self.settings.accel, 
@@ -1135,7 +1221,7 @@ Solution:
 P_aux = {Paux}
 P_fusion = {Pfusion}
 P_SOL = {Ploss - Prad}
-P_load = {(Ploss-Prad)/self.params[i_params].A}
+P_load = {(Ploss-Prad)/self.params[i_params].agrid[-1]}
 P_ohmic = {Pohmic}
 P_rad = {Prad}
 P_heat = {Pheat}
@@ -1206,9 +1292,21 @@ betaN = {betaN}
     def plot(self, i_params:int, show:bool=True, names=None) -> None:
         figsize = self.plotsettings.figsize
         fig, ax = plt.subplots(figsize=figsize)
-        xx = self.outputs[i_params].T_i_avg
-        if self.plotsettings.yax == 'n20':
+        if self.plotsettings.xax == 'T_i_av':
+            xx = self.outputs[i_params].T_i_avg
+        elif self.plotsettings.xax == 'T_i_ax':
+            xx = self.outputs[i_params].T_i_max
+        elif self.plotsettings.xax == 'T_e_av':
+            xx = self.outputs[i_params].T_e_avg
+        elif self.plotsettings.xax == 'T_e_ax':
+            xx = self.outputs[i_params].T_e_max
+        else:
+            raise ValueError("Invalid x-axis. Change xax in plotsettings.")
+        
+        if self.plotsettings.yax == 'n20_av':
             yy = self.outputs[i_params].n20_avg
+        elif self.plotsettings.yax == 'n20_ax':
+            yy = self.outputs[i_params].n20_max
         elif self.plotsettings.yax == 'nG':
             yy = self.outputs[i_params].n_G_frac
         else:
@@ -1244,11 +1342,23 @@ betaN = {betaN}
                 
             self.plot_contours(opdict['plot'], ax, data, xx, yy, levels, *plotoptions)
         
-        ax.set_xlabel('$T_i$ (keV)')
-        if self.plotsettings.yax == 'n20':
-            ax.set_ylabel(r'$n_{20}$ ($10^{20} m^{-3}$)')
+        if self.plotsettings.xax == 'T_i_av':
+            ax.set_xlabel(r'$\langle T_i\rangle$ (keV)')
+        elif self.plotsettings.xax == 'T_i_ax':
+            ax.set_xlabel(r'$T_i$ (keV, On-axis)')
+        elif self.plotsettings.xax == 'T_e_av':
+            ax.set_xlabel(r'$\langle T_e\rangle$ (keV)')
+        elif self.plotsettings.xax == 'T_e_ax':
+            ax.set_xlabel(r'$T_e$ (keV, On-axis)')
+        else:
+            pass
+        
+        if self.plotsettings.yax == 'n20_av':
+            ax.set_ylabel(r'$\langle n_{20}\rangle$ ($10^{20} m^{-3}$)')
+        elif self.plotsettings.yax == 'n20_ax':
+            ax.set_ylabel(r'$n_{20}(0)$')
         elif self.plotsettings.yax == 'nG':
-            ax.set_ylabel(r'$n/n_G$')
+            ax.set_ylabel(r'$\langle n\rangle /n_G$')
         else:
             pass
         p = self.params[i_params]
@@ -1358,8 +1468,9 @@ betaN = {betaN}
         J = np.sqrt(Jpol**2 + Jtor**2)
         psiJ = np.linspace(0,1,J.shape[0])
         Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
+        Jr = Jr/Jr[0]
         Ipint = np.trapz(Jr,2*np.pi*(self.params[-1].a*sqrtpsin)**2)
-        Jr = Jr/Ipint
+        Jr = np.abs(Jr/Ipint)
 
         self.params[i_params]._addextprof(sqrtpsin,-2)
         self.params[i_params]._addextprof(volgrid,-1)
