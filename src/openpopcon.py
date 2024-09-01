@@ -18,11 +18,13 @@ Contributors:
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from regex import P
 import yaml
+import json
 from .lib.openpopcon_util import *
 import numba as nb
 from .lib import phys_lib as phys
+import shutil
+import datetime
 
 
 # core of calculations
@@ -870,6 +872,7 @@ class POPCON_settings:
             #-----------------------------------------------------------
             # Params
             #-----------------------------------------------------------
+            self.name = str(data['name'])
             self.R = float(data['R'])
             self.a = float(data['a'])
             self.kappa = float(data['kappa'])
@@ -960,8 +963,7 @@ class POPCON_settings:
             raise KeyError(f'Key {e} not found in {filename}')
 
 
-# jit compiled
-@nb.experimental.jitclass(spec = [
+POPCON_data_spec = [
     ('n_G_frac', nb.float64[:]),
     ('n_e_20_max', nb.float64[:]),
     ('n_e_20_avg', nb.float64[:]),
@@ -993,7 +995,9 @@ class POPCON_settings:
     ('H98', nb.float64[:,:]),
     ('vloop', nb.float64[:,:]),
     ('betaN', nb.float64[:,:])
-]) # type: ignore
+]
+# jit compiled
+@nb.experimental.jitclass(spec = POPCON_data_spec) # type: ignore
 class POPCON_data:
     """
     Output data class for the POPCON.
@@ -1031,6 +1035,36 @@ class POPCON_data:
         self.vloop: np.ndarray
         self.betaN: np.ndarray
         pass
+
+# NOT jit compiled
+class POPCON_simulation:
+    """
+    Placeholder for new structure
+    """
+    def __init__(self) -> None:
+        self.data: POPCON_data
+        self.params: POPCON_params
+        self.settings: POPCON_settings
+        self.plotsettings: POPCON_plotsettings
+        self.scalinglaws: dict
+        pass
+
+
+class POPCON_scan:
+    """
+    Placeholder for new structure
+    """
+    def __init__(self) -> None:
+        self.datas: list[POPCON_data]
+        self.params: list[POPCON_params]
+        self.settings: POPCON_settings
+        self.plotsettings: list[POPCON_plotsettings]
+        self.scalinglaws: dict
+        self.scanvariables: dict[str, np.ndarray]
+        pass
+
+
+
 
 # NOT jit compiled
 class POPCON_plotsettings:
@@ -1084,6 +1118,7 @@ class POPCON:
 
         if settingsfile is not None:
             self.settings = POPCON_settings(settingsfile)
+            self.settingsfile = settingsfile
         else:
             pass
         if plotsettingsfile is not None:
@@ -1093,6 +1128,7 @@ class POPCON:
             pass
         if scalinglawfile is not None:
             self.__get_scaling_laws(scalinglawfile)
+            self.sacalinglawfile = scalinglawfile
         else:
             pass
         
@@ -1540,6 +1576,7 @@ betaN = {betaN:.3f}
         self.params[-1].tipeak_over_tepeak = self.settings.tipeak_over_tepeak
         self.params[-1].fuel = self.settings.fuel
         self.params[-1].impurityfractions = self.settings.impurityfractions
+        self.params[-1].verbosity = self.settings.verbosity
 
     def __get_profiles(self, i_params) -> None:
         profstable = read_profsfile(self.settings.profsfilename)
@@ -1607,6 +1644,42 @@ betaN = {betaN:.3f}
             self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
 
         pass
+
+    def write_output(self, output:int=-1, name:str='', archive:bool=True):
+        if name == '':
+            name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
+
+
+        outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+        # Check if directory exists
+        exists = outputsdir.joinpath(name).exists()
+        if not exists:
+            outputsdir.joinpath(name).mkdir()
+
+        savedir = outputsdir.joinpath(name)
+
+        shutil.copyfile(self.settingsfile, savedir.joinpath('settings.yaml'))
+        shutil.copyfile(self.plotsettingsfile, savedir.joinpath('plotsettings.yaml'))
+        shutil.copyfile(self.sacalinglawfile, savedir.joinpath('scalinglaws.yaml'))
+        
+        writedata = {}
+        keys = POPCON_data_spec
+        for key in keys:
+            writedata[key[0]] = getattr(self.outputs[output],key[0]).tolist()
+        
+        with open(savedir.joinpath('arrays.json'), 'w') as f:
+            json.dump(writedata, f)
+
+        if self.settings.gfilename != '':
+            shutil.copyfile(self.settings.gfilename, savedir.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
+        if self.settings.profsfilename != '':
+            shutil.copyfile(self.settings.profsfilename, savedir.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
+
+        if archive:
+            shutil.make_archive(name, 'zip', savedir, outputsdir)
+            shutil.rmtree(savedir)
+
+
 
 def copy_params(params:POPCON_params) -> POPCON_params:
     new = POPCON_params()

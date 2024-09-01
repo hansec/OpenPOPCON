@@ -3,6 +3,8 @@
 # Machine Paramters
 #-----------------------------------------------------------------------
 
+name: "Cmod NT"
+
 R: 0.8 # major radius in meters
 a: 0.27 # minor radius in meters
 kappa: 1.7 # elongation

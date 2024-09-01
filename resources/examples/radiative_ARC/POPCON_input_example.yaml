@@ -3,6 +3,8 @@
 # Machine Paramters
 #-----------------------------------------------------------------------
 
+name: "ARC Rad-Lmode"
+
 R: 4.2 # major radius in meters
 a: 1.2 # minor radius in meters
 kappa: 1.6 # elongation
