@@ -99,7 +99,8 @@ from .lib import phys_lib as phys
             ('kappa_alpha', nb.float64),
             ('B0_alpha', nb.float64),
             ('Pheat_alpha', nb.float64),
-            ('n20_alpha', nb.float64)
+            ('n20_alpha', nb.float64),
+            ('verbosity', nb.int64),
           ]) # type: ignore
 class POPCON_params:
     """
@@ -218,6 +219,11 @@ class POPCON_params:
         self.B0_alpha: float = 0.15
         self.Pheat_alpha: float = -0.69
         self.n20_alpha: float = 0.41
+
+        #---------------------------------------------------------------
+        # Etc
+        #---------------------------------------------------------------
+        self.verbosity: int = 0
 
         pass
 
@@ -680,16 +686,12 @@ class POPCON_params:
             #         raise Warning(f"Power balance relaxation solver diverged in iteration {ii}. Try reducing the relaxation factor.")
             
             if ii == max_iters-1:
-                print(f"Power balance relaxation solver did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.") 
-        
-        if P_aux_iter < 0:
-            print("\n\n------------------------------------")
-            print("P_heat =", P_ohmic_heating_iter + P_fusion_heating_iter)
-            print("P_loss =", P_confinement_loss_iter)
-            print("P_sol = ", P_confinement_loss_iter - P_brem_iter - P_imp_iter)
+                if self.verbosity > 0:
+                    print(f"Power balance relaxation solver did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.")
         
         if P_imp_iter > P_confinement_loss_iter:
-            print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
+            if self.verbosity > 0:
+                print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
             P_aux_iter = 99999.
 
         return P_aux_iter
@@ -1458,7 +1460,7 @@ betaN = {betaN:.3f}
         fueldict = {1:'D-D', 2:'D-T', 3:'D-He3'}
 
         ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
-        infoboxtext = f"$I_p$ = {p.Ip:.2f}\n$B_0$ = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\n\\kappa = {p.kappa:.2f}\n\\delta = {p.delta:.2f}\n$M_i$ = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\n<Zeff>={p.Zeff(np.average(xx)):.2f}"
+        infoboxtext = f"$I_p$ = {p.Ip:.2f}\n$B_0$ = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\n$\\kappa$ = {p.kappa:.2f}\n$\\delta$ = {p.delta:.2f}\n$M_i$ = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\n<Zeff>={p.Zeff(np.average(xx)):.2f}"
         ax.text(x=np.max(xx)+(np.max(xx)-np.min(xx))/64,y=np.min(yy),s=infoboxtext, bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8))
 
         if show:
