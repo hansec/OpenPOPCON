@@ -3,7 +3,7 @@
 #-----------------------------------------------------------------------
 
 yax: "n20_av" # y-axis variable; nG for greenwald fraction, n20 for density
-xax: "T_i_ax" # x-axis variable; T_i_av for average ion temperature, 
+xax: "T_i_av" # x-axis variable; T_i_av for average ion temperature, 
               #                  T_i_ax for maximum ion temperature,
               #                  T_e_av for average electron temperature,
               #                  T_e_ax for maximum electron temperature
