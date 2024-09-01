@@ -24,9 +24,8 @@ B_0: 3. # on-axis magnetic field in Tesla
 #----------------------
 
 #----------------------
-M_i: 2.5 # average ion mass in amu
 tipeak_over_tepeak: 1.1 # ratio of ion to electron temperature at peak
-fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
+fuel: 1 # 1 for D-D, 2 for D-T, 3 for D-He3
 #----------------------
 
 #----------------------
@@ -40,9 +39,9 @@ fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
 # 5 W
 # Impfracs and Z_eff can be calculated from each other. If you specify
 # Z_eff, the impurity fraction for the specified impurity will be overwritten.
-impurityfractions: [0.02, 0., 0., 0.001, 0., 0.]
-Zeff_target: 2.1 # average effective charge of plasma
-impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
+impurityfractions: [0.00, 0., 0., 0., 0., 0.00000001]
+# Zeff_target: 1.1 # average effective charge of plasma
+# impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
 #----------------------
 
 #----------------------
@@ -92,7 +91,7 @@ nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
 Tmax_keV: 1.5 # maximum volume-averaged temperature in keV
 Tmin_keV: 0.5 # minimum volume-averaged temperature in keV
 maxit: 100000 # maximum number of iterations
-accel: 1.5 # acceleration factor
+accel: 1. # acceleration factor
 err: 1e-6 # error tolerance
 verbosity: 1 # 0 for no output, 1 for minimal output, 2 for verbose output
 parallel: False

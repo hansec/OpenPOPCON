@@ -18,6 +18,7 @@ Contributors:
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from regex import P
 import yaml
 from .lib.openpopcon_util import *
 import numba as nb
@@ -320,17 +321,17 @@ class POPCON_params:
     #-------------------------------------------------------------------
     
     # Z_eff, effective ion charge
-    def Zeff(self, T_e:float):
+    def Zeff(self, T_e_keV:float):
         # Zeff = sum ( n_i * Z_i^2 ) / n_e
         # n_i = n20 * species fraction
         # n_e = n20 / dilution
         # n20 cancels
 
         # Hydrogen isotopes + impurities
-        return ( (1-np.sum(self.impurityfractions)) + np.sum(self.impurityfractions*phys.get_Zeffs(T_e)**2))*self.get_plasma_dilution(T_e)
+        return ( (1-np.sum(self.impurityfractions)) + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)**2))*self.get_plasma_dilution(T_e_keV)
     
-    def get_plasma_dilution(self, T_e):
-        dil = 1/(1 + np.sum(self.impurityfractions*phys.get_Zeffs(T_e)))
+    def get_plasma_dilution(self, T_e_keV):
+        dil = 1/(1 + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)))
         return dil
 
     # coefficient for Spitzer conductivity, necessary to obtain ohmic power
@@ -354,18 +355,14 @@ class POPCON_params:
     #     return 
 
     
-    def get_eta_NC(self, rho, T0, n20):
+    def get_eta_NC(self, rho, T_e_keV, n_e_20):
         # Calculate the neoclassical resistivity in Ohm-m
         # Equations 16-17 from [1] Jardin et al. 1993
         # TODO: Enforce rho > 0 to avoid division by zero
         if np.any(rho <= 0):
             raise ValueError("Invalid rho value. Neoclassical resistivity not defined at rho=0.")
-        T_e_r = T0*self.get_extprof(rho, 4)/self.tipeak_over_tepeak
-        n_i_r = 1e20*n20*self.get_extprof(rho, 2)
-        dil = np.empty_like(n_i_r)
-        for i in np.arange(T_e_r.shape[0]):
-            dil[i] = self.get_plasma_dilution(T_e_r[i])
-        n_e_r = 1e20*n20*self.get_extprof(rho, 1)/dil
+        T_e_r = T_e_keV*self.get_extprof(rho, 4)
+        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 1)
         q = self.get_extprof(rho, 5)
         Zeffprof = np.empty_like(T_e_r)
         for i in np.arange(T_e_r.shape[0]):
@@ -391,24 +388,24 @@ class POPCON_params:
         eta_NC = eta_C / eta_C_eta_NC_ratio
         return eta_NC
     
-    def get_Vloop(self, T0, n20):
+    def get_Vloop(self, T_e_keV, n_e_20):
         # Calculate the loop voltage at ~plasma center
         # V_loop = P_ohmic / Ip
-        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T0, n20))
+        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
         return P_OH/self.Ip
         
     
-    def get_BetaN(self, T0, n20):
+    def get_BetaN(self, T_i_keV, n_e_20):
         # Calculate the normalized beta
         # beta = 2*mu0*<P>/(B^2)
-        # <P> = int P dV / V
+        # <P> = int P dV / V (average pressure)
         # beta_N = beta*a*B0/(Ip)
 
-        P_avg = 1e6*self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T0, n20))/self.V
+        P_avg = 1e6*self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))/self.V
         beta =  2*(4e-7*np.pi)*P_avg/(self.B0**2)
         return beta*self.a*self.B0/self.Ip
     
-    def tauE_scalinglaw(self, P, n20):
+    def tauE_scalinglaw(self, Pheat, n_e_20):
         tauE = self.H_fac*self.scaling_const
         tauE *= self.M_i**self.M_i_alpha
         tauE *= self.Ip**self.Ip_alpha
@@ -416,11 +413,11 @@ class POPCON_params:
         tauE *= self.a**self.a_alpha
         tauE *= self.kappa**self.kappa_alpha
         tauE *= self.B0**self.B0_alpha
-        tauE *= P**self.Pheat_alpha
-        tauE *= n20**self.n20_alpha
+        tauE *= Pheat**self.Pheat_alpha
+        tauE *= n_e_20**self.n20_alpha
         return tauE
     
-    def tauE_H98(self, P, n20):
+    def tauE_H98(self, Pheat, n_e_20):
         # H98y2 scaling law
         tauE = 0.145
         #M_i**(0.19)*Ip**(0.93)*R**(1.39)*a**(0.58)*kappa**(0.78)*B0**(0.15)*Pheat**(-0.69)*n20**(0.41)
@@ -430,11 +427,11 @@ class POPCON_params:
         tauE *= self.a**0.58
         tauE *= self.kappa**0.78
         tauE *= self.B0**0.15
-        tauE *= P**(-0.69)
-        tauE *= n20**0.41
+        tauE *= Pheat**(-0.69)
+        tauE *= n_e_20**0.41
         return tauE
     
-    def tauE_H89(self, P, n20):
+    def tauE_H89(self, Pheat, n_e_20):
         # H89 scaling law
         #0.048*M_i**(0.5)*Ip**(0.85)*R**(1.2)*a**(0.3)*kappa**(0.5)*B0**(0.2)*Pheat**(-0.5)*n20**(0.1)
         tauE = 0.048
@@ -444,106 +441,138 @@ class POPCON_params:
         tauE *= self.a**0.3
         tauE *= self.kappa**0.5
         tauE *= self.B0**0.2
-        tauE *= P**(-0.5)
-        tauE *= n20**0.1
+        tauE *= Pheat**(-0.5)
+        tauE *= n_e_20**0.1
         return tauE
 
     #-------------------------------------------------------------------
     # Power profiles
     #-------------------------------------------------------------------
 
-    def _W_tot_prof(self, rho, T0, n20):
+    def _W_tot_prof(self, rho, T_i_keV, n_e_20):
         """
         Plasma energy per cubic meter; also pressure.
         """
-        n_i_r = 1e20*n20*self.get_extprof(rho, 2)
-        T_i_r = T0*self.get_extprof(rho, 3)
+        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 2)
+        T_e_r = T_i_keV*self.get_extprof(rho, 4)/self.tipeak_over_tepeak
+        dil = self.get_plasma_dilution(T_i_keV/self.tipeak_over_tepeak)
+        n_i_r = 1e20*n_e_20*self.get_extprof(rho, 2)*dil
+        T_i_r = T_i_keV*self.get_extprof(rho, 3)
         # W_density = 3/2 * n_i * T_i
         # = 3/2 * (n_i_r) ( 1.60218e-22 * T_i_r (keV) ) (MJ/m^3)
-        return 3/2 * 1.60218e-22 * n_i_r * T_i_r
+        return 3/2 * 1.60218e-22 * (n_i_r * T_i_r + n_e_r * T_e_r)
     
-    def _P_DDpT_prof(self, rho, T0, n20):
+    def _P_DDpT_prof(self, rho, T_i_keV, n_i_20):
         """
         D(d,p)T power per cubic meter
         """
-        n_i_r = 1e20*n20*self.get_extprof(rho, 2)
-        T_i_r = T0*self.get_extprof(rho, 3)
+        if self.fuel == 1:
+            dfrac = 1
+        elif self.fuel == 2:
+            dfrac = 0.5
+        else:
+            raise ValueError("Invalid fuel cycle.")
+        
+        n_i_r = 1e20*n_i_20*self.get_extprof(rho, 2)
+        T_i_r = T_i_keV*self.get_extprof(rho, 3)
 
         # reaction frequency f = n_D/sqrt(2) * n_D/sqrt(2) * <sigma v> (1/s)
         # 1.60218e-22 is the conversion factor from keV to MJ
         # <sigma v> is in cm^3/s so we need to convert to m^3/s, hence 1e-6
         # P_DD_density = 1.60218e-22 * f(DD->pT) * (T_tritium + T_proton)  (MW/m^3)
 
-        f_ddpt = np.power( ( n_i_r / (2*np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,2) * 1e-6
+        f_ddpt = np.power( ( dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,2) * 1e-6
         return 1.60218e-22 * f_ddpt * (1.01e3 + 3.02e3)
     
-    def _P_DDnHe3_prof(self, rho, T0, n20):
+    def _P_DDnHe3_prof(self, rho, T_i_keV, n_i_20):
         """
         D(d,n)He3 power per cubic meter
         """
-        n_i_r = 1e20*n20*self.get_extprof(rho, 2)
-        T_i_r = T0*self.get_extprof(rho, 3)
+        if self.fuel == 1:
+            dfrac = 1-np.sum(self.impurityfractions)
+        elif self.fuel == 2:
+            dfrac = 0.5-np.sum(self.impurityfractions)/2
+        else:
+            raise ValueError("Invalid fuel cycle.")
+        
+        n_i_r = 1e20*n_i_20*self.get_extprof(rho, 2)
+        T_i_r = T_i_keV*self.get_extprof(rho, 3)
 
         # See _P_DDpT_prof for explanation.
         # Note, for heating, only the He3 heats the plasma. For heating purposes,
         # multiply by 0.82e3/(2.45e3 + 0.82e3).
 
-        f_ddnhe3 = np.power( (  n_i_r / (2*np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,3) * 1e-6
+        f_ddnhe3 = np.power( (  dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,3) * 1e-6
         return 1.60218e-22 * f_ddnhe3 * (2.45e3 + 0.82e3)
     
-    def _P_DTnHe4_prof(self, rho, T0, n20):
+    def _P_DTnHe4_prof(self, rho, T_i_keV, n_i_20):
         """
         T(d,n)He4 power per cubic meter
         """
-        n_i_r = 1e20*n20*self.get_extprof(rho, 2)
-        T_i_r = T0*self.get_extprof(rho, 3)
+        if self.fuel == 1:
+            dfrac = 1-np.sum(self.impurityfractions)
+            tfrac = 0
+        elif self.fuel == 2:
+            dfrac = 0.5-np.sum(self.impurityfractions)/2
+            tfrac = 0.5-np.sum(self.impurityfractions)/2
+        else:
+            raise ValueError("Invalid fuel cycle.")
+        
+        n_i_r = 1e20*n_i_20*self.get_extprof(rho, 2)
+        T_i_r = T_i_keV*self.get_extprof(rho, 3)
 
         # See _P_DDpT_prof for explanation.
         # Note, for heating, only the He4 / alpha heats the plasma. For heating purposes,
         # multiply by 3.52e3/(3.52e3 + 14.06e3).
 
-        f_dtnhe4 = (n_i_r)/2 * (n_i_r)/2 * phys.get_reactivity(T_i_r,1) * 1e-6
+        f_dtnhe4 = dfrac*(n_i_r) * tfrac*(n_i_r) * phys.get_reactivity(T_i_r,1) * 1e-6
         return 1.60218e-22 * f_dtnhe4 * (3.52e3 + 14.06e3)
     
-    def _P_fusion_heating(self, rho, T0, n20):
+    def _P_fusion_heating(self, rho, T_i_keV, n_i_20):
         """
         D-D and D-T heating power per cubic meter
         """
-        return self._P_DDpT_prof(rho, T0, n20) + \
-              self._P_DDnHe3_prof(rho,T0,n20)*(0.82e3/(2.45e3+0.82e3))+\
-              self._P_DTnHe4_prof(rho,T0,n20)*(3.52e3/(3.52e3+14.06e3))
+        return  self._P_DDpT_prof(rho,T_i_keV,n_i_20) + \
+              self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)*(0.82e3/(2.45e3+0.82e3))+\
+              self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)*(3.52e3/(3.52e3+14.06e3))
     
-    def _P_fusion(self, rho, T0, n20):
+    def _P_fusion(self, rho, T_i_keV, n_i_20):
         """
         Fusion power per cubic meter.
         """
-        return self._P_DDpT_prof(rho, T0, n20) + \
-                self._P_DDnHe3_prof(rho,T0,n20)+\
-                self._P_DTnHe4_prof(rho,T0,n20)
+        return self._P_DDpT_prof(rho, T_i_keV, n_i_20) + \
+                self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)+\
+                self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)
     
-    def Q_fusion(self, T0, n20, Paux):
+    def Q_fusion(self, T_i_keV, n_e_20, Paux):
         """
-        Fusion power in MW.
+        Physical fusion gain factor.
         """
-        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T0, n20))
-        return P_fusion/Paux
+        T_e_keV = T_i_keV/self.tipeak_over_tepeak
+        dil = self.get_plasma_dilution(T_e_keV)
+        n_i_20 = n_e_20*dil
+        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
+        P_ohmic_heating = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
+        return P_fusion/(Paux + P_ohmic_heating)
     
-    def _P_rad(self, rho, T0, n20):
+    def Q_eng(self, T_i_keV, n_e_20, Paux):
         """
-        Radiative power per cubic meter. Zohm 2019.
+        Engineering fusion gain factor; thermal heat out / thermal heat in.
+        """
+        T_e_keV = T_i_keV/self.tipeak_over_tepeak
+        dil = self.get_plasma_dilution(T_e_keV)
+        n_i_20 = n_e_20*dil
+        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
+        P_ohmic_heating = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
+        return (P_fusion + Paux + P_ohmic_heating)/(Paux + P_ohmic_heating)
+    
+    def _P_brem_rad(self, rho, T_e_keV, n_e_20):
+        """
+        Radiative power per cubic meter. See formulary.
         """
 
-        T_i_r = T0*self.get_extprof(rho, 3)
-        T_e_r = T0/self.tipeak_over_tepeak*self.get_extprof(rho, 4)
-        n_i_r = 1e20*n20*self.get_extprof(rho, 2)
-        dil = np.empty_like(n_i_r)
-        for i in np.arange(n_i_r.shape[0]):
-            dil[i] = self.get_plasma_dilution(T_i_r[i])
-        n_e_r = 1e20*n20*self.get_extprof(rho, 1)/dil
-
-        Lz = np.empty((T_e_r.shape[0],6),dtype=np.float64)
-        for i in np.arange(T_e_r.shape[0]):
-            Lz[i,:] = phys.get_rads(T_e_r[i])
+        T_e_r = T_e_keV*self.get_extprof(rho, 4)
+        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 1)
 
         total_Zeff = np.empty(T_e_r.shape[0],dtype=np.float64)
         for i in np.arange(T_e_r.shape[0]):
@@ -552,24 +581,33 @@ class POPCON_params:
         # P_brem = 5.35e-3*1e-6*G*total_Zeff*(1e-20*n_e_r)**2*T_e_r**0.5
         # From Plasma Formulary
         P_brem = G*1e-6*np.sqrt(1000*T_e_r)*total_Zeff*(n_e_r/7.69e18)**2
+        return P_brem
+    
+    def _P_impurity_rad(self, rho, T_e_keV, n_e_20):
+        """
+        Radiative power per cubic meter from impurities. Zohm 2019.
+        """
+        T_e_r = T_e_keV*self.get_extprof(rho, 4)
+        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 1)
+        Lz = np.empty((T_e_r.shape[0],6),dtype=np.float64)
+        for i in np.arange(T_e_r.shape[0]):
+            Lz[i,:] = phys.get_rads(T_e_r[i])
+        
         P_line = np.sum(1e-6*(Lz.T*(n_e_r)**2).T*self.impurityfractions,axis=1)
-        P_synchotron = 1.32e-7 * (self.B0 * T_i_r)**(2.5) * (n_i_r/1e20/self.a)**0.5 * (1+18*self.a/(self.R*T_i_r**0.5))
-        return P_brem + P_line + P_synchotron
+        return P_line
     
-    # def _P_OH_avg(self, n20, T0):# -> Any: #ohmic heating power density calculation, assuming constant current TODO: Rewrite
-    #     T_e_keV = T0/self.tipeak_over_tepeak
-    #     loglam = 24-np.log(np.sqrt(n20*1.0e20))/(T_e_keV*1e3)
-    #     Pd = self.get_Cspitz(True, T_e_keV) / (T_e_keV*1e3)**(1.5)*0.016*loglam/15.0
-    #     #loglam = 24-np.log(np.sqrt(self._nfun(rho,n20)*1.0e20)/(self._Tfun(rho,Te)*1e3))
-    #     #Pd = self._Cspitzfun(rho,Te,impfrac) / (self._Tfun(rho,Te)*1e3)**(1.5)*0.016*loglam/15.0
-    #     return(Pd)
+    def _P_rad(self, rho, T_e_keV, n_e_20):
+        """
+        Total radiative power per cubic meter.
+        """
+        return self._P_brem_rad(rho, T_e_keV, n_e_20) + self._P_impurity_rad(rho, T_e_keV, n_e_20)
     
-    def _P_OH_prof(self, rho, T0, n20):
+    def _P_OH_prof(self, rho, T_e_keV, n_e_20):
         """
         Ohmic power per cubic meter
         """
 
-        eta_NC = self.get_eta_NC(rho, T0, n20)
+        eta_NC = self.get_eta_NC(rho, T_e_keV, n_e_20)
         J = self.Ip*1e6*self.get_extprof(rho, 0)
         return 1e-6*eta_NC*J**2
 
@@ -577,32 +615,36 @@ class POPCON_params:
     # Power Balance Relaxation Solvers
     #-------------------------------------------------------------------
 
-    def P_aux_relax_impfrac(self, n20, Ti, accel=1., err=1e-5, max_iters=1000):
+    def P_aux_relax_impfrac(self, n_e_20, T_i_keV, accel=1., err=1e-5, max_iters=1000):
         """
         Relaxation solver for holding impfrac constant.
         """
         # print(f"Solving T_i =",Ti, "keV, n20 =",n20,"e20 m^-3")
         
-        P_aux_iter = 20.
-        P_aux_iter_last = 0.
+        P_aux_iter = 100. # Don't want to undershoot as we can end up with P~0 and this can create a NaN! So we choose a high starting point.
+        T_e_keV = T_i_keV/self.tipeak_over_tepeak
+        dil = self.get_plasma_dilution(T_e_keV)
+        n_i_20 = n_e_20*dil
+        line_average_fac = np.average(self.get_extprof(self.sqrtpsin, 1))
         dPaux: float
-        P_fusion_heating_iter = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, Ti, n20))
-        P_ohmic_heating_iter = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, Ti, n20))
-        W_tot_iter = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, Ti, n20))
-        P_rad_iter = self.volume_integral(self.sqrtpsin, self._P_rad(self.sqrtpsin, Ti, n20))
-        n_average_over_n_peak = self.volume_integral(self.sqrtpsin, self.get_extprof(self.sqrtpsin, 2))/self.V
+        P_fusion_heating_iter = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, T_i_keV, n_i_20))
+        P_ohmic_heating_iter = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
+        W_tot_iter = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))
+        # P_rad_iter = self.volume_integral(self.sqrtpsin, self._P_rad(self.sqrtpsin, T_e_keV, n_e_20))
+        P_brem_iter = self.volume_integral(self.sqrtpsin, self._P_brem_rad(self.sqrtpsin, T_e_keV, n_e_20))
+        P_imp_iter = self.volume_integral(self.sqrtpsin, self._P_impurity_rad(self.sqrtpsin, T_e_keV, n_e_20))
         for ii in np.arange(max_iters):
             # Power in
-            P_totalheating_iter = P_aux_iter + P_ohmic_heating_iter + P_fusion_heating_iter
+            P_totalheating_iter = P_aux_iter + P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter
             # print()
             # print("P_fusion = ", P_fusion_heating_iter)
             # print("P_ohmic = ", P_ohmic_heating_iter)
             # print("P_aux =", P_aux_iter)
             # print()
             # Power out
-            tauE_iter = self.tauE_scalinglaw(P_totalheating_iter, n20*n_average_over_n_peak)
+            tauE_iter = self.tauE_scalinglaw(P_totalheating_iter, n_e_20*line_average_fac)
             P_confinement_loss_iter = W_tot_iter/tauE_iter
-            P_totalloss_iter = P_rad_iter + P_confinement_loss_iter
+            P_totalloss_iter = P_confinement_loss_iter
             # print("W_tot =", W_tot_iter)
             # print("tauE =", tauE_iter)
             # print("P_rad =", P_rad_iter)
@@ -610,13 +652,21 @@ class POPCON_params:
             # print('-------------------------------------------------')
             # Power balance
             dPaux = P_totalloss_iter - P_totalheating_iter
-            P_aux_iter += accel*dPaux
+
+            # Relaxation
+            if -dPaux*accel > P_aux_iter:
+                # Prevent negative aux power
+                P_aux_iter -= 0.9*P_aux_iter
+            else:
+                P_aux_iter += accel*dPaux
+            if P_aux_iter < -(P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter):
+                # Prevent negative total heating power
+                P_aux_iter = P_brem_iter
 
             # print("\n\n------------------------------------")
-            # print("P_heat =", P_ohmic_heating_iter + P_fusion_heating_iter)
+            # print("P_heat =", P_totalheating_iter)
             # print("P_heat_tot =", P_totalheating_iter)
             # print("P_loss =", P_totalloss_iter)
-
 
             if P_aux_iter < 1.0:
                 if np.abs(dPaux/1.0) < err:
@@ -630,15 +680,17 @@ class POPCON_params:
             #         raise Warning(f"Power balance relaxation solver diverged in iteration {ii}. Try reducing the relaxation factor.")
             
             if ii == max_iters-1:
-                raise Warning(f"Power balance relaxation solver did not converge in {max_iters} iterations.")
-
-            P_aux_iter_last = P_aux_iter
+                print(f"Power balance relaxation solver did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.") 
         
         if P_aux_iter < 0:
             print("\n\n------------------------------------")
             print("P_heat =", P_ohmic_heating_iter + P_fusion_heating_iter)
-            print("P_loss =", P_rad_iter + P_confinement_loss_iter)
-
+            print("P_loss =", P_confinement_loss_iter)
+            print("P_sol = ", P_confinement_loss_iter - P_brem_iter - P_imp_iter)
+        
+        if P_imp_iter > P_confinement_loss_iter:
+            print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
+            P_aux_iter = 99999.
 
         return P_aux_iter
     #-------------------------------------------------------------------
@@ -837,71 +889,54 @@ class POPCON_settings:
                 print(f"Ip = {self.Ip} calculated from qstar.")
             else:
                 raise KeyError('I_P or qstar not found in settings file.')
-            self.M_i = float(data['M_i'])
             self.tipeak_over_tepeak = float(data['tipeak_over_tepeak'])
             self.fuel = int(data['fuel'])
+            if self.fuel == 3:
+                raise ValueError("D-He3 fuel cycle not implemented yet. Please use D-D or D-T.")
             self.impurityfractions = np.array(data['impurityfractions'], dtype=np.float64)
             if 'Zeff_target' in data and 'impurity' in data:
                 impurity = int(data['impurity'])
                 self.impurityfractions[impurity] = phys.get_impurity_fraction(data['Zeff_target'], self.impurityfractions[0], impurity, (float(data['Tmax_keV'])-float(data['Tmin_keV']))/2+float(data['Tmin_keV']))
                 print(f"Impurity fractions = {self.impurityfractions} calculated from Zeff_target.")
 
+            if self.fuel == 1:
+                f_D = 1-np.sum(self.impurityfractions)
+                f_T = 0
+            elif self.fuel == 2:
+                f_D = 0.5-np.sum(self.impurityfractions)/2
+                f_T = 0.5-np.sum(self.impurityfractions)/2
+            else:
+                raise ValueError("Invalid fuel cycle.")
+            
+
+            self.M_i = f_D * 2.014 + f_T * 3.016 + np.dot(self.impurityfractions, np.array([4.002, 20.18, 39.948, 83.80, 131.29, 183.84]))
+
             self.scalinglaw = str(data['scalinglaw'])
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
-            if 'gfilename' in data:
-                self.gfilename = str(data['gfilename'])
-            else:
-                self.gfilename = ''
-            if 'profsfilename' in data:
-                self.profsfilename = str(data['profsfilename'])
-            else:
-                self.profsfilename = ''
 
-            if 'j_alpha1' in data:
-                self.j_alpha1 = float(data['j_alpha1'])
-                self.j_alpha2 = float(data['j_alpha2'])
-                self.j_offset = float(data['j_offset'])
-            else:
-                self.j_alpha1 = 1.
-                self.j_alpha2 = 2.
-                self.j_offset = 0
-            
-            if 'ne_alpha1' in data:
-                self.ne_alpha1 = float(data['ne_alpha1'])
-                self.ne_alpha2 = float(data['ne_alpha2'])
-                self.ne_offset = float(data['ne_offset'])
-            else:
-                self.ne_alpha1 = 2.
-                self.ne_alpha2 = 1.5
-                self.ne_offset = 0
+            self.gfilename = str(safe_get(data,'gfilename',''))
+            self.profsfilename = str(safe_get(data,'profsfilename',''))
 
-            if 'ni_alpha1' in data:
-                self.ni_alpha1 = float(data['ni_alpha1'])
-                self.ni_alpha2 = float(data['ni_alpha2'])
-                self.ni_offset = float(data['ni_offset'])
-            else:
-                self.ni_alpha1 = 2.
-                self.ni_alpha2 = 1.5
-                self.ni_offset = 0
-            
-            if 'Ti_alpha1' in data:
-                self.Ti_alpha1 = float(data['Ti_alpha1'])
-                self.Ti_alpha2 = float(data['Ti_alpha2'])
-                self.Ti_offset = float(data['Ti_offset'])
-            else:
-                self.Ti_alpha1 = 2.
-                self.Ti_alpha2 = 1.5
-                self.Ti_offset = 0
-            
-            if 'Te_alpha1' in data:
-                self.Te_alpha1 = float(data['Te_alpha1'])
-                self.Te_alpha2 = float(data['Te_alpha2'])
-                self.Te_offset = float(data['Te_offset'])
-            else:
-                self.Te_alpha1 = 2.
-                self.Te_alpha2 = 1.5
-                self.Te_offset = 0
+            self.j_alpha1 = float(safe_get(data,'j_alpha1',1))
+            self.j_alpha2 = float(safe_get(data,'j_alpha2',2))
+            self.j_offset = float(safe_get(data,'j_offset',0))
+
+            self.ne_alpha1 = float(safe_get(data,'ne_alpha1',2))
+            self.ne_alpha2 = float(safe_get(data,'ne_alpha2',1.5))
+            self.ne_offset = float(safe_get(data,'ne_offset',0))
+
+            self.ni_alpha1 = float(safe_get(data,'ni_alpha1',2))
+            self.ni_alpha2 = float(safe_get(data,'ni_alpha2',1.5))
+            self.ni_offset = float(safe_get(data,'ni_offset',0))
+
+            self.Ti_alpha1 = float(safe_get(data,'Ti_alpha1',2))
+            self.Ti_alpha2 = float(safe_get(data,'Ti_alpha2',1.5))
+            self.Ti_offset = float(safe_get(data,'Ti_offset',0))
+
+            self.Te_alpha1 = float(safe_get(data,'Te_alpha1',2))
+            self.Te_alpha2 = float(safe_get(data,'Te_alpha2',1.5))
+            self.Te_offset = float(safe_get(data,'Te_offset',0))
 
             
 
@@ -926,8 +961,10 @@ class POPCON_settings:
 # jit compiled
 @nb.experimental.jitclass(spec = [
     ('n_G_frac', nb.float64[:]),
-    ('n20_max', nb.float64[:]),
-    ('n20_avg', nb.float64[:]),
+    ('n_e_20_max', nb.float64[:]),
+    ('n_e_20_avg', nb.float64[:]),
+    ('n_i_20_max', nb.float64[:,:]),
+    ('n_i_20_avg', nb.float64[:,:]),
     ('T_i_max', nb.float64[:]),
     ('T_i_avg', nb.float64[:]),
     ('T_e_max', nb.float64[:]),
@@ -936,14 +973,19 @@ class POPCON_settings:
     ('Pfusion', nb.float64[:,:]),
     ('Pfusionheating', nb.float64[:,:]),
     ('Pohmic', nb.float64[:,:]),
+    ('Pbrems', nb.float64[:,:]),
+    ('Pimprad', nb.float64[:,:]),
     ('Prad', nb.float64[:,:]),
     ('Pheat', nb.float64[:,:]),
+    ('Wtot', nb.float64[:,:]),
+    ('tauE', nb.float64[:,:]),
+    ('Pconf', nb.float64[:,:]),
     ('Ploss', nb.float64[:,:]),
-    ('Palpha', nb.float64[:,:]),
     ('Pdd', nb.float64[:,:]),
     ('Pdt', nb.float64[:,:]),
+    ('Palpha', nb.float64[:,:]),
     ('Psol', nb.float64[:,:]),
-    ('tauE', nb.float64[:,:]),
+    ('f_rad', nb.float64[:,:]),
     ('Q', nb.float64[:,:]),
     ('H89', nb.float64[:,:]),
     ('H98', nb.float64[:,:]),
@@ -956,8 +998,10 @@ class POPCON_data:
     """
     def __init__(self) -> None:
         self.n_G_frac: np.ndarray
-        self.n20_max: np.ndarray
-        self.n20_avg: np.ndarray
+        self.n_e_20_max: np.ndarray
+        self.n_e_20_avg: np.ndarray
+        self.n_i_20_max: np.ndarray
+        self.n_i_20_avg: np.ndarray
         self.T_i_max: np.ndarray
         self.T_i_avg: np.ndarray
         self.T_e_max: np.ndarray
@@ -966,14 +1010,19 @@ class POPCON_data:
         self.Pfusion: np.ndarray
         self.Pfusionheating: np.ndarray
         self.Pohmic: np.ndarray
+        self.Pbrems: np.ndarray
+        self.Pimprad: np.ndarray
         self.Prad: np.ndarray
         self.Pheat: np.ndarray
+        self.Wtot: np.ndarray
+        self.tauE: np.ndarray
+        self.Pconf: np.ndarray
         self.Ploss: np.ndarray
-        self.Palpha: np.ndarray
         self.Pdd: np.ndarray
         self.Pdt: np.ndarray
+        self.Palpha: np.ndarray
         self.Psol: np.ndarray
-        self.tauE: np.ndarray
+        self.f_rad: np.ndarray
         self.Q: np.ndarray
         self.H89: np.ndarray
         self.H98: np.ndarray
@@ -991,7 +1040,7 @@ class POPCON_plotsettings:
         self.figsize: tuple = (8,6)
         self.yax: str = 'nG'
         self.xax: str = 'T_i_av'
-
+        self.fill_invalid: bool = True
         self.read(filename)
 
         pass
@@ -1001,10 +1050,16 @@ class POPCON_plotsettings:
             data = yaml.safe_load(open(filename, 'r'))
         else:
             raise ValueError('Filename must end with .yaml or .yml')
-        self.plotoptions = data['plotoptions']
-        self.figsize = tuple(data['figsize'])
-        self.yax = data['yax']
-        self.xax = data['xax']
+        
+        defaults = yaml.safe_load(open(get_POPCON_homedir(['resources','default_plotsettings.yml']), 'r'))
+
+        self.plotoptions = {}
+        for key in defaults['plotoptions']:
+            self.plotoptions[key] = safe_get(data['plotoptions'], key, defaults['plotoptions'][key])
+        self.figsize = tuple(safe_get(data, 'figsize', defaults['figsize']))
+        self.yax = safe_get(data, 'yax', defaults['yax'])
+        self.xax = safe_get(data, 'xax', defaults['xax'])
+        self.fill_invalid = safe_get(data, 'fill_invalid', defaults['fill_invalid'])
         
         pass
 
@@ -1072,6 +1127,7 @@ class POPCON:
         self.params[-1]._setup_profs()
         scalinglaw = self.settings.scalinglaw
         slparam = self.scalinglaws[scalinglaw]
+        self.params[-1].H_fac = self.settings.H_fac
         self.params[-1].scaling_const = slparam['scaling_const']
         self.params[-1].M_i_alpha = slparam['M_i_alpha']
         self.params[-1].Ip_alpha = slparam['Ip_alpha']
@@ -1091,7 +1147,7 @@ class POPCON:
 
         @nb.njit(parallel=self.settings.parallel)
         def solve_nT(params:POPCON_params, nn:int, nT:int,
-                        ni:np.ndarray, Ti:np.ndarray, 
+                        n_e_20:np.ndarray, T_i_keV:np.ndarray, 
                         accel:float=1.2, err:float=1e-5,
                         maxit:int=1000):
 
@@ -1100,8 +1156,8 @@ class POPCON:
             for i in nb.prange(nn):
                 for j in nb.prange(nT):
 
-                    Paux[i,j] = params.P_aux_relax_impfrac(ni[i],
-                                                            Ti[j], 
+                    Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
+                                                            T_i_keV[j], 
                                                             accel, 
                                                             err,
                                                             maxit)
@@ -1109,74 +1165,90 @@ class POPCON:
             return Paux
         
         @nb.njit(parallel=self.settings.parallel)
-        def populate_outputs(params:POPCON_params, result:POPCON_data, Nn, NTi, ni, Ti):
+        def populate_outputs(params:POPCON_params, result:POPCON_data, Nn, NTi):
             rho = params.sqrtpsin
+            line_average_fac = np.average(params.get_extprof(rho, 1))
             for i in nb.prange(Nn):
                 for j in nb.prange(NTi):
-                    result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, Ti[j], ni[i]))
-                    result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, Ti[j], ni[i]))
-                    result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, Ti[j], ni[i]))
-                    result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, Ti[j], ni[i]))
-                    result.Pheat[i,j] = result.Pfusion[i,j] + result.Pohmic[i,j] + result.Paux[i,j]
-                    result.Palpha[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, Ti[j], ni[i]))*3.52e3/(3.52e3 + 14.06e3)
-                    result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, Ti[j], ni[i]))
-                    result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, Ti[j], ni[i]))
-                    result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, Ti[j], ni[i]))
-                    result.Ploss[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j]
-                    result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], ni[i])
-                    result.Q[i,j] = params.Q_fusion(Ti[j], ni[i], result.Paux[i,j])
-                    result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], ni[i])
-                    result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], ni[i])
-                    result.vloop[i,j] = params.get_Vloop(Ti[j], ni[i])
-                    result.betaN[i,j] = 100*params.get_BetaN(Ti[j], ni[i]) # in percent
+                    dil = params.get_plasma_dilution(result.T_e_max[j])
+                    result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
+                    result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_extprof(rho, 2))/params.V
+                    result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+                    result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+                    result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
+                    result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+                    result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+                    result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+                    result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j]
+                    result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
+                    result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+                    result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
+                    result.Ploss[i,j] = result.Pconf[i,j] + result.Prad[i,j]
+                    result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+                    result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+                    result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+                    result.Palpha[i,j] = result.Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
                     result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
+                    result.f_rad[i,j] = result.Prad[i,j] / result.Ploss[i,j]
+                    result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
+                    result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+                    result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+                    result.vloop[i,j] = params.get_Vloop(result.T_e_max[j], result.n_e_20_max[i])
+                    result.betaN[i,j] = 100*params.get_BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
             return result
         
         self.outputs = []
             
         for i_params in range(len(self.params)):
-
             params = self.params[i_params]
+            rho = params.sqrtpsin
             n_G = params.n_GR
-            n_average = params.volume_integral(params.sqrtpsin, params.extprof_ni)/params.V
-            Ti_average = params.volume_integral(params.sqrtpsin, params.extprof_Ti)/params.V
-            Te_average = params.volume_integral(params.sqrtpsin, params.extprof_Te)/params.V
-            ni = np.linspace(self.settings.nmin_frac*n_G/n_average, self.settings.nmax_frac*n_G/n_average, self.settings.Nn)
-            Ti = np.linspace(self.settings.Tmin_keV/Ti_average, self.settings.Tmax_keV/Ti_average, self.settings.NTi)
-            Te = Ti/self.settings.tipeak_over_tepeak
+            n_e_avg_fac= params.volume_integral(rho, params.get_extprof(rho,1))/params.V
+            T_i_avg_fac = params.volume_integral(rho, params.get_extprof(rho,3))/params.V
+            T_e_avg_fac = params.volume_integral(rho, params.get_extprof(rho,4))/params.V
+            n_e_20 = np.linspace(self.settings.nmin_frac*n_G/n_e_avg_fac, self.settings.nmax_frac*n_G/n_e_avg_fac, self.settings.Nn)
+            T_i_keV = np.linspace(self.settings.Tmin_keV/T_i_avg_fac, self.settings.Tmax_keV/T_i_avg_fac, self.settings.NTi)
+            T_e_keV = T_i_keV/self.settings.tipeak_over_tepeak
 
             result = POPCON_data()
             result.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
-            result.n20_max = ni
-            result.n20_avg = ni * n_average
-            result.T_i_max = Ti
-            result.T_i_avg = Ti * Ti_average
-            result.T_e_max = Te
-            result.T_e_avg = Te * Te_average
+            result.n_e_20_max = n_e_20
+            result.n_e_20_avg = n_e_20 * n_e_avg_fac
+            result.T_i_max = T_i_keV
+            result.T_i_avg = T_i_keV * T_i_avg_fac
+            result.T_e_max = T_e_keV
+            result.T_e_avg = T_e_keV * T_e_avg_fac
             
             Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
-                                    ni, Ti, self.settings.accel, 
+                                    n_e_20, T_i_keV, self.settings.accel, 
                                     self.settings.err, self.settings.maxit)
 
             result.Paux = Paux
+            result.n_i_20_avg = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.n_i_20_max = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pfusion = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Pbrems = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Pimprad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Wtot = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.tauE = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Pconf = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Ploss = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Palpha = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pdd = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Pdt = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.tauE = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Palpha = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.Psol = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+            result.f_rad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.Q = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.H89 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.H98 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.vloop = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
             result.betaN = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Psol = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
 
-            result = populate_outputs(params, result, self.settings.Nn, self.settings.NTi, ni, Ti)
+            result = populate_outputs(params, result, self.settings.Nn, self.settings.NTi)
 
             self.outputs.append(result)
 
@@ -1186,70 +1258,81 @@ class POPCON:
         
         n_G = self.params[i_params].n_GR
         rho = self.params[i_params].sqrtpsin
-        n_average = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 2))/self.params[i_params].V
-        n20 = n_G_frac*n_G/n_average
-        Ti_average = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 3))/self.params[i_params].V
-        Ti = Ti_av/Ti_average
+        n_e_avg_fac = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 1))/self.params[i_params].V
+        n_e_20 = n_G_frac*n_G/n_e_avg_fac
+        T_i_avg_fac = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 3))/self.params[i_params].V
+        n_i_avg_fac = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 2))/self.params[i_params].V
+        T_i_keV = Ti_av/T_i_avg_fac
+        T_e_keV = T_i_keV/self.params[i_params].tipeak_over_tepeak
+        dil = self.params[i_params].get_plasma_dilution(T_e_keV)
+        n_i_20 = n_e_20*dil
+        line_avg_fac = np.average(self.params[i_params].get_extprof(rho, 1))
 
-        Paux = self.params[i_params].P_aux_relax_impfrac(n20,Ti,self.settings.accel,self.settings.err,self.settings.maxit)
+        Paux = self.params[i_params].P_aux_relax_impfrac(n_e_20,T_i_keV,self.settings.accel,self.settings.err,self.settings.maxit)
         
-        Pfusion = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion(rho, Ti, n20))
-        Pfusion_heating = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion_heating(rho, Ti, n20))
-        Pohmic = self.params[i_params].volume_integral(rho,self.params[i_params]._P_OH_prof(rho, Ti, n20))
-        Prad = self.params[i_params].volume_integral(rho,self.params[i_params]._P_rad(rho, Ti, n20))
+        Pfusion = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion(rho, T_i_keV, n_i_20))
+        Pfusion_heating = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion_heating(rho, T_i_keV, n_i_20))
+        Pohmic = self.params[i_params].volume_integral(rho,self.params[i_params]._P_OH_prof(rho, T_e_keV, n_e_20))
+        Prad = self.params[i_params].volume_integral(rho,self.params[i_params]._P_rad(rho, T_e_keV, n_e_20))
         Pheat = Pfusion_heating + Pohmic + Paux
-        Palpha = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, Ti, n20))*3.52e3/(3.52e3 + 14.06e3)
-        Pdd = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDnHe3_prof(rho, Ti, n20))
-        Pdd += self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDpT_prof(rho, Ti, n20))
-        Pdt = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, Ti, n20))
-        tauE = self.params[i_params].tauE_scalinglaw(Pheat, n20)
-        Ploss = Pfusion_heating + Pohmic + Paux
-        Q = self.params[i_params].Q_fusion(Ti, n20, Paux)
-        H89 = tauE/self.params[i_params].tauE_H89(Pheat,n20)
-        H98 = tauE/self.params[i_params].tauE_H98(Pheat,n20)
-        vloop = self.params[i_params].get_Vloop(Ti, n20)
-        betaN = self.params[i_params].get_BetaN(Ti, n20) # in percent
+        Palpha = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
+        Pdd = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
+        Pdd += self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDpT_prof(rho, T_i_keV, n_i_20))
+        Pdt = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20))
+        tauE = self.params[i_params].tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
+        Wtot = self.params[i_params].volume_integral(rho,self.params[i_params]._W_tot_prof(rho,T_i_keV,n_e_20))
+        Pconf = Wtot/tauE
+        Ploss = Pconf + Prad
+        f_rad = Prad/Ploss
+        Q = self.params[i_params].Q_fusion(T_i_keV, n_e_20, Paux)
+        H89 = tauE/self.params[i_params].tauE_H89(Pheat,n_e_20*line_avg_fac)
+        H98 = tauE/self.params[i_params].tauE_H98(Pheat,n_e_20*line_avg_fac)
+        vloop = self.params[i_params].get_Vloop(T_e_keV, n_e_20)
+        betaN = 100*self.params[i_params].get_BetaN(T_i_keV, n_e_20) # in percent
         pstring = \
 f"""
 Params:
-n_average = {n_G_frac*n_G}
-n_G = {n_G}
-n_axis = {n20}
-Ti_average = {Ti_av}
-Ti_axis = {Ti}
+n_i_average = {n_i_avg_fac*n_i_20} x 10^20 m^-3
+n_e_average = {n_G_frac*n_G:1.3f} x 10^20 m^-3
+n_G = {n_G:1.3f} x 10^20 m^-3
+n_i_axis = {n_i_20:1.3f} x 10^20 m^-3
+n_e_axis = {n_e_20:1.3f} x 10^20 m^-3
+Ti_average = {Ti_av:.1f} keV
+Ti_axis = {T_i_keV:.1f} keV
 Solution:
-P_aux = {Paux}
-P_fusion = {Pfusion}
-P_SOL = {Ploss - Prad}
-P_load = {(Ploss-Prad)/self.params[i_params].agrid[-1]}
-P_ohmic = {Pohmic}
-P_rad = {Prad}
-P_heat = {Pheat}
-P_alpha = {Palpha}
-P_dd = {Pdd}
-P_dt = {Pdt}
-tauE = {tauE}
-Q = {Q}
-H89 = {H89}
-H98 = {H98}
-vloop = {vloop}
-betaN = {betaN}
+P_aux = {Paux:.2f} MW
+P_fusion = {Pfusion:.2f} MW
+P_SOL = {Ploss - Prad:.2f} MW
+P_load = {(Ploss-Prad)/self.params[i_params].A:.3f} MW/m^2
+P_ohmic = {Pohmic:.3f} MW
+P_rad = {Prad:.2f} MW
+P_heat = {Pheat:.2f} MW
+P_alpha = {Palpha:.2f} MW
+P_dd = {Pdd:.3f} MW
+P_dt = {Pdt:.2f} MW
+Wtot/TauE = {Pconf:.2f} MW
+f_rad = {f_rad:.3f} 
+tauE = {tauE:.3f} s
+Q = {Q:.3f} MW
+H89 = {H89:.2f}
+H98 = {H98:.2f}
+vloop = {vloop:.4f} V
+betaN = {betaN:.3f}
 """
         print(pstring)
 
         if plot:
-            Pfusion_prof = self.params[i_params]._P_fusion(rho, Ti, n20)
-            Pfusion_heating_prof = self.params[i_params]._P_fusion_heating(rho, Ti, n20)
-            Pohmic_prof = self.params[i_params]._P_OH_prof(rho, Ti, n20)
-            Prad_prof = self.params[i_params]._P_rad(rho, Ti, n20)
+            Pfusion_prof = self.params[i_params]._P_fusion(rho, T_i_keV, n_i_20)
+            Pfusion_heating_prof = self.params[i_params]._P_fusion_heating(rho, T_i_keV, n_i_20)
+            Pohmic_prof = self.params[i_params]._P_OH_prof(rho, T_e_keV, n_e_20)
+            Prad_prof = self.params[i_params]._P_rad(rho, T_e_keV, n_e_20)
             Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.params[i_params].V
-            Palpha_prof = self.params[i_params]._P_DTnHe4_prof(rho, Ti, n20)*3.52e3/(3.52e3 + 14.06e3)
-            Pdt_prof = self.params[i_params]._P_DTnHe4_prof(rho, Ti, n20)
-            niprof = n20*self.params[i_params].get_extprof(rho, 2)
-            neprof = n20*self.params[i_params].get_extprof(rho, 1)/self.params[i_params].get_plasma_dilution(Ti/self.params[i_params].tipeak_over_tepeak)
-            Tiprof = Ti*self.params[i_params].get_extprof(rho, 3)
-            Te = Ti/self.params[i_params].tipeak_over_tepeak
-            Teprof = Te*self.params[i_params].get_extprof(rho, 4)
+            Palpha_prof = self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20)*3.52e3/(3.52e3 + 14.06e3)
+            Pdt_prof = self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20)
+            niprof = n_i_20*self.params[i_params].get_extprof(rho, 2)
+            neprof = n_e_20*self.params[i_params].get_extprof(rho, 1)
+            Tiprof = T_i_keV*self.params[i_params].get_extprof(rho, 3)
+            Teprof = T_e_keV*self.params[i_params].get_extprof(rho, 4)
             qprof = self.params[i_params].get_extprof(rho, 5)
 
             # Density and temperatures
@@ -1289,7 +1372,7 @@ betaN = {betaN}
     # Plotting
     #-------------------------------------------------------------------
 
-    def plot(self, i_params:int, show:bool=True, names=None) -> None:
+    def plot(self, i_params:int, show:bool=True, names=None):
         figsize = self.plotsettings.figsize
         fig, ax = plt.subplots(figsize=figsize)
         if self.plotsettings.xax == 'T_i_av':
@@ -1304,14 +1387,17 @@ betaN = {betaN}
             raise ValueError("Invalid x-axis. Change xax in plotsettings.")
         
         if self.plotsettings.yax == 'n20_av':
-            yy = self.outputs[i_params].n20_avg
+            yy = self.outputs[i_params].n_e_20_avg
         elif self.plotsettings.yax == 'n20_ax':
-            yy = self.outputs[i_params].n20_max
+            yy = self.outputs[i_params].n_e_20_max
         elif self.plotsettings.yax == 'nG':
             yy = self.outputs[i_params].n_G_frac
         else:
             raise ValueError("Invalid y-axis. Change yax in plotsettings.")
         xx, yy = np.meshgrid(xx,yy)
+        mask = np.logical_or(np.isnan(self.outputs[i_params].Paux),self.outputs[i_params].Paux >=99998.)
+        if self.plotsettings.fill_invalid:
+            ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.05)
         if names is None:
             names = self.plotsettings.plotoptions.keys()
         for name in names:
@@ -1340,7 +1426,7 @@ betaN = {betaN}
             else:
                 raise ValueError(f"Invalid spacing for {name}. Change spacing in plotsettings.")
                 
-            self.plot_contours(opdict['plot'], ax, data, xx, yy, levels, *plotoptions)
+            self.plot_contours(opdict['plot'], ax, np.ma.array(data,mask=mask), xx, yy, levels, *plotoptions)
         
         if self.plotsettings.xax == 'T_i_av':
             ax.set_xlabel(r'$\langle T_i\rangle$ (keV)')
@@ -1368,12 +1454,12 @@ betaN = {betaN}
 
         ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
         infoboxtext = f"I_p = {p.Ip:.2f}\nB_0 = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\nkappa = {p.kappa:.2f}\ndelta = {p.delta:.2f}\nM_i = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\nZeff av={p.Zeff(np.average(xx)):.2f}"
-        ax.text(x=.1,y=.1,s=infoboxtext,va='bottom',bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.7))
+        ax.text(x=np.max(xx)+(np.max(xx)-np.min(xx))/64,y=np.min(yy),s=infoboxtext, bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8))
 
         if show:
             plt.show()
 
-        pass
+        return fig, ax
     
     def plot_contours(self, plotbool:bool, ax, data:np.ndarray, xx:np.ndarray, yy:np.ndarray, levels, color, linewidth, label:str, fontsize:int, fmt:str):
         if plotbool:
@@ -1383,7 +1469,31 @@ betaN = {betaN}
             ax.clabel(contour,inline=1,fmt=fmt,fontsize=fontsize)
         pass
     
-    
+    def custom_plot(self, fig, ax, i_params:int, data, levels, color='k', linewidth=1., label:str='custom', fontsize:int=11, fmt:str='%1.2f'):
+        if self.plotsettings.xax == 'T_i_av':
+            xx = self.outputs[i_params].T_i_avg
+        elif self.plotsettings.xax == 'T_i_ax':
+            xx = self.outputs[i_params].T_i_max
+        elif self.plotsettings.xax == 'T_e_av':
+            xx = self.outputs[i_params].T_e_avg
+        elif self.plotsettings.xax == 'T_e_ax':
+            xx = self.outputs[i_params].T_e_max
+        else:
+            raise ValueError("Invalid x-axis. Change xax in plotsettings.")
+        
+        if self.plotsettings.yax == 'n20_av':
+            yy = self.outputs[i_params].n_e_20_avg
+        elif self.plotsettings.yax == 'n20_ax':
+            yy = self.outputs[i_params].n_e_20_max
+        elif self.plotsettings.yax == 'nG':
+            yy = self.outputs[i_params].n_G_frac
+        else:
+            raise ValueError("Invalid y-axis. Change yax in plotsettings.")
+        xx, yy = np.meshgrid(xx,yy)
+        mask = np.logical_or(np.isnan(self.outputs[i_params].Paux),self.outputs[i_params].Paux >=99998.)
+        self.plot_contours(True, ax, np.ma.array(data,mask=mask), xx, yy, levels, *[color,linewidth,label,fontsize,fmt])
+
+        return fig, ax
 
     # def plot_profiles(self, i_params:int, show:bool=True) -> None:
 
