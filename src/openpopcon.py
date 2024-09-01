@@ -25,6 +25,7 @@ import numba as nb
 from .lib import phys_lib as phys
 import shutil
 import datetime
+from .lib import neat_json_encoder as nj
 
 
 # core of calculations
@@ -1665,10 +1666,10 @@ betaN = {betaN:.3f}
         writedata = {}
         keys = POPCON_data_spec
         for key in keys:
-            writedata[key[0]] = getattr(self.outputs[output],key[0]).tolist()
+            writedata[key[0]] = getattr(self.outputs[output],key[0])
         
         with open(savedir.joinpath('arrays.json'), 'w') as f:
-            json.dump(writedata, f)
+            json.dump(writedata, f, cls=nj.CompactJSONEncoder)
 
         if self.settings.gfilename != '':
             shutil.copyfile(self.settings.gfilename, savedir.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
@@ -1678,6 +1679,7 @@ betaN = {betaN:.3f}
         if archive:
             shutil.make_archive(name, 'zip', savedir, outputsdir)
             shutil.rmtree(savedir)
+            shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
 
 
 
