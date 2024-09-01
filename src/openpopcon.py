@@ -1179,11 +1179,11 @@ class POPCON:
                     result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-                    result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j]
+                    result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
                     result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
                     result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
                     result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
-                    result.Ploss[i,j] = result.Pconf[i,j] + result.Prad[i,j]
+                    result.Ploss[i,j] = result.Pconf[i,j]
                     result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
                     result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
                     result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
@@ -1273,8 +1273,10 @@ class POPCON:
         Pfusion = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion(rho, T_i_keV, n_i_20))
         Pfusion_heating = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion_heating(rho, T_i_keV, n_i_20))
         Pohmic = self.params[i_params].volume_integral(rho,self.params[i_params]._P_OH_prof(rho, T_e_keV, n_e_20))
+        Pbrems = self.params[i_params].volume_integral(rho,self.params[i_params]._P_brem_rad(rho, T_e_keV, n_e_20))
+        Pimprad = self.params[i_params].volume_integral(rho,self.params[i_params]._P_impurity_rad(rho, T_e_keV, n_e_20))
         Prad = self.params[i_params].volume_integral(rho,self.params[i_params]._P_rad(rho, T_e_keV, n_e_20))
-        Pheat = Pfusion_heating + Pohmic + Paux
+        Pheat = Pfusion_heating + Pohmic + Paux - Pbrems
         Palpha = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
         Pdd = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
         Pdd += self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDpT_prof(rho, T_i_keV, n_i_20))
@@ -1282,7 +1284,7 @@ class POPCON:
         tauE = self.params[i_params].tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
         Wtot = self.params[i_params].volume_integral(rho,self.params[i_params]._W_tot_prof(rho,T_i_keV,n_e_20))
         Pconf = Wtot/tauE
-        Ploss = Pconf + Prad
+        Ploss = Pconf
         f_rad = Prad/Ploss
         Q = self.params[i_params].Q_fusion(T_i_keV, n_e_20, Paux)
         H89 = tauE/self.params[i_params].tauE_H89(Pheat,n_e_20*line_avg_fac)
@@ -1305,6 +1307,8 @@ P_fusion = {Pfusion:.2f} MW
 P_SOL = {Ploss - Prad:.2f} MW
 P_load = {(Ploss-Prad)/self.params[i_params].A:.3f} MW/m^2
 P_ohmic = {Pohmic:.3f} MW
+P_brems = {Pbrems:.3f} MW
+P_imprad = {Pimprad:.3f} MW
 P_rad = {Prad:.2f} MW
 P_heat = {Pheat:.2f} MW
 P_alpha = {Palpha:.2f} MW
@@ -1313,7 +1317,7 @@ P_dt = {Pdt:.2f} MW
 Wtot/TauE = {Pconf:.2f} MW
 f_rad = {f_rad:.3f} 
 tauE = {tauE:.3f} s
-Q = {Q:.3f} MW
+Q = {Q:.3f} 
 H89 = {H89:.2f}
 H98 = {H98:.2f}
 vloop = {vloop:.4f} V
@@ -1407,6 +1411,7 @@ betaN = {betaN:.3f}
             print("Plotting",name)
             plotoptions = [opdict['color'],opdict['linewidth'],opdict['label'],opdict['fontsize'],opdict['fmt']]
             data = getattr(self.outputs[i_params],name)
+            data = np.ma.array(data,mask=mask)
             if opdict['spacing'] == 'lin':
                 if opdict['scale'] == 'minmax':
                     levels = np.linspace(np.min(data),np.max(data),opdict['levels'])
@@ -1426,7 +1431,7 @@ betaN = {betaN:.3f}
             else:
                 raise ValueError(f"Invalid spacing for {name}. Change spacing in plotsettings.")
                 
-            self.plot_contours(opdict['plot'], ax, np.ma.array(data,mask=mask), xx, yy, levels, *plotoptions)
+            self.plot_contours(opdict['plot'], ax, data, xx, yy, levels, *plotoptions)
         
         if self.plotsettings.xax == 'T_i_av':
             ax.set_xlabel(r'$\langle T_i\rangle$ (keV)')
@@ -1453,7 +1458,7 @@ betaN = {betaN:.3f}
         fueldict = {1:'D-D', 2:'D-T', 3:'D-He3'}
 
         ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
-        infoboxtext = f"I_p = {p.Ip:.2f}\nB_0 = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\nkappa = {p.kappa:.2f}\ndelta = {p.delta:.2f}\nM_i = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\nZeff av={p.Zeff(np.average(xx)):.2f}"
+        infoboxtext = f"$I_p$ = {p.Ip:.2f}\n$B_0$ = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\n\\kappa = {p.kappa:.2f}\n\\delta = {p.delta:.2f}\n$M_i$ = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\n<Zeff>={p.Zeff(np.average(xx)):.2f}"
         ax.text(x=np.max(xx)+(np.max(xx)-np.min(xx))/64,y=np.min(yy),s=infoboxtext, bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8))
 
         if show:
