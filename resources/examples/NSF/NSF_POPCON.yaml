@@ -23,9 +23,10 @@ B_0: 3 # on-axis magnetic field in Tesla
 # wall_thickness: 1.5 # wall thickness between magnet and separatrix in meters
 #----------------------
 
-M_i: 2.01410178 # average ion mass in amu
+#----------------------
 tipeak_over_tepeak: 1.0 # ratio of ion to electron temperature at peak
 fuel: 1 # 1 for D-D, 2 for D-T, 3 for D-He3
+#----------------------
 
 #----------------------
 # Impurity Fractions
@@ -38,28 +39,59 @@ fuel: 1 # 1 for D-D, 2 for D-T, 3 for D-He3
 # 5 W
 # Impfracs and Z_eff can be calculated from each other. If you specify
 # Z_eff, the impurity fraction for the specified impurity will be overwritten.
-impurityfractions: [0, 0., 0., 0, 0., 0.]
-Z_eff: 2.1 # average effective charge of plasma
-impurity: 0 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
+impurityfractions: [0, 0., 0., 0, 0., 0.00000001]
+# Z_eff: 2.1 # average effective charge of plasma
+# impurity: 0 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
 #----------------------
 
+#----------------------
 scalinglaw: "H_NT23" # Name of tau_E scaling law as defined in scaling_laws.yaml
 H_fac: 1.0 # Factor by which to multiply the scaling law
-nr: 100 # number of radial grid points
+nr: 200 # number of radial grid points
+#----------------------
+
+#----------------------
+# Profiles
+# If you specify a filename, the profiles will be read from that file and normalized.
+# Otherwise, the normalized profiles will be parabolic of the form
+# f(r) = (1 - offset)*(1 - r**alpha1)**alpha2 + offset
+# j profile comes from the equilibrium, the others come from the profs file.
+gfilename: "./gNSF"
+profsfilename: "./pNSF.csv"
+
+# j_alpha1: 2.
+# j_alpha2: 3.
+# j_offset: 0.
+
+# ne_alpha1: 2.
+# ne_alpha2: 1.1
+# ne_offset: 0.25
+
+# ni_alpha1: 2.
+# ni_alpha2: 1.1
+# ni_offset: 0.25
+
+# Ti_alpha1: 2.
+# Ti_alpha2: 1.5
+# Ti_offset: 0.005
+
+# Te_alpha1: 2.
+# Te_alpha2: 1.5
+# Te_offset: 0.005
+#----------------------
+
 
 #----------------------
 # Algorithm settings
 #----------------------
 Nn: 20 # resolution of densities
 NTi: 20 # resolution of ion temperatures
-gfilename: "./resources/examples/NSF/gNSF"
-profsfilename: "./resources/examples/NSF/pNSF.csv"
 nmax_frac: 1 # maximum density as a fraction of the Greenwald density
 nmin_frac: 0.1 # minimum density as a fraction of the Greenwald density
-Tmax_keV: 5. # maximum volume-averaged temperature in keV
-Tmin_keV: 1 # minimum volume-averaged temperature in keV
+Tmax_keV: 2. # maximum volume-averaged temperature in keV
+Tmin_keV: 0.3 # minimum volume-averaged temperature in keV
 maxit: 2000 # maximum number of iterations
-accel: 1.1 # acceleration factor
+accel: 1. # acceleration factor
 err: 1e-6 # error tolerance
 verbosity: 1 # 0 for no output, 1 for minimal output, 2 for verbose output
 parallel: False
