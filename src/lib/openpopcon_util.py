@@ -1,7 +1,12 @@
 import numpy as np
 import contourpy as cntr
 import csv
+import os
+import pathlib
 
+
+def get_POPCON_homedir(path=[]):
+    return str(pathlib.Path(__file__).resolve().parent.parent.parent) + os.sep + str(os.sep).join(path)
 
 def read_eqdsk(filename):
     ''' Taken from OpenFUSION toolkit. Perhaps do an import instead?
@@ -160,7 +165,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         # Get the area of the flux surface
         d = np.diff(contour, axis=0)
         ds = np.sqrt(d[:, 0]**2 + d[:, 1]**2)
-        Agrid[icontour] = np.trapz(np.pi*contour[:-1,0]**2 * ds, axis=0)
+        Agrid[icontour] = np.trapz(2*np.pi*contour[:-1,0] * ds, axis=0)
 
     return psin, Volgrid, Agrid, closed_fluxsurfaces
 
@@ -186,3 +191,10 @@ def read_profsfile(filename):
         profstable['rho'] = profstable['r']
 
     return profstable
+
+
+def safe_get(unsafe_dict, key, default=None):
+    if key in unsafe_dict:
+        return unsafe_dict[key]
+    else:
+        return default
