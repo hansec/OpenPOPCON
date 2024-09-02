@@ -5,6 +5,21 @@ import os
 import pathlib
 
 
+def yaml_edit(filename, key, value) -> None:
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    for i, line in enumerate(lines):
+        if line.strip(' ').startswith(key):
+            ind = line.find(':')
+            lines[i] = lines[i][:ind+1] + ' ' + str(value) + '\n'
+            break
+    
+    with open(filename, 'w') as f:
+        f.writelines(lines)
+    
+    return
+
+
 def get_POPCON_homedir(path=[]):
     return str(pathlib.Path(__file__).resolve().parent.parent.parent) + os.sep + str(os.sep).join(path)
 
