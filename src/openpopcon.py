@@ -28,6 +28,9 @@ import datetime
 from .lib import neat_json_encoder as nj
 
 
+DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml'])
+DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
+
 # core of calculations
 # jit compiled
 @nb.experimental.jitclass(spec = [
@@ -330,7 +333,7 @@ class POPCON_params:
     #-------------------------------------------------------------------
     
     # Z_eff, effective ion charge
-    def Zeff(self, T_e_keV:float):
+    def Zeff(self, T_e_keV):
         # Zeff = sum ( n_i * Z_i^2 ) / n_e
         # n_i = n20 * species fraction
         # n_e = n20 / dilution
@@ -1037,20 +1040,6 @@ class POPCON_data:
         self.betaN: np.ndarray
         pass
 
-# NOT jit compiled
-class POPCON_simulation:
-    """
-    Placeholder for new structure
-    """
-    def __init__(self) -> None:
-        self.data: POPCON_data
-        self.params: POPCON_params
-        self.settings: POPCON_settings
-        self.plotsettings: POPCON_plotsettings
-        self.scalinglaws: dict
-        pass
-
-
 class POPCON_scan:
     """
     Placeholder for new structure
@@ -1063,9 +1052,6 @@ class POPCON_scan:
         self.scalinglaws: dict
         self.scanvariables: dict[str, np.ndarray]
         pass
-
-
-
 
 # NOT jit compiled
 class POPCON_plotsettings:
@@ -1111,27 +1097,28 @@ class POPCON:
 
     def __init__(self, settingsfile = None, plotsettingsfile = None, scalinglawfile = None) -> None:
 
-        self.params: list[POPCON_params] = []
+        self.params: POPCON_params
         self.settings: POPCON_settings
         self.plotsettings: POPCON_plotsettings
-        self.outputs: list[POPCON_data] = []
-        self.numpopcons: int
+        self.output: POPCON_data
 
         if settingsfile is not None:
             self.settings = POPCON_settings(settingsfile)
             self.settingsfile = settingsfile
         else:
             pass
-        if plotsettingsfile is not None:
-            self.plotsettings = POPCON_plotsettings(plotsettingsfile)
-            self.plotsettingsfile = plotsettingsfile
-        else:
-            pass
-        if scalinglawfile is not None:
-            self.__get_scaling_laws(scalinglawfile)
-            self.sacalinglawfile = scalinglawfile
-        else:
-            pass
+
+        if plotsettingsfile is None:
+            plotsettingsfile = DEFAULT_PLOTSETTINGS
+
+        self.plotsettings = POPCON_plotsettings(plotsettingsfile)
+        self.plotsettingsfile = plotsettingsfile
+
+        if scalinglawfile is None:
+            scalinglawfile = DEFAULT_SCALINGLAWS
+
+        self.__get_scaling_laws(scalinglawfile)
+        self.scalinglawfile = scalinglawfile
         
         self.__check_settings()
         compile_test = POPCON_params()
@@ -1150,37 +1137,37 @@ class POPCON:
         self.__setup_params()
         if self.settings.gfilename == '':
             rho = np.linspace(0.001,1,self.settings.nr)
-            self.params[-1]._addextprof(rho,-2)
-            self.params[-1]._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
+            self.params._addextprof(rho,-2)
+            self.params._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
             
         else:
-            self.__get_geometry(-1)
+            self.__get_geometry()
         if self.settings.profsfilename == '':
-            self.params[-1]._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
-            self.params[-1]._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
-            self.params[-1]._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
-            self.params[-1]._set_alpha_and_offset(self.settings.Te_alpha1, self.settings.Te_alpha2, self.settings.Te_offset, 4)
+            self.params._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
+            self.params._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
+            self.params._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
+            self.params._set_alpha_and_offset(self.settings.Te_alpha1, self.settings.Te_alpha2, self.settings.Te_offset, 4)
         else:
-            self.__get_profiles(-1)
+            self.__get_profiles()
 
-        self.params[-1]._setup_profs()
+        self.params._setup_profs()
         scalinglaw = self.settings.scalinglaw
         slparam = self.scalinglaws[scalinglaw]
-        self.params[-1].H_fac = self.settings.H_fac
-        self.params[-1].scaling_const = slparam['scaling_const']
-        self.params[-1].M_i_alpha = slparam['M_i_alpha']
-        self.params[-1].Ip_alpha = slparam['Ip_alpha']
-        self.params[-1].R_alpha = slparam['R_alpha']
-        self.params[-1].a_alpha = slparam['a_alpha']
-        self.params[-1].kappa_alpha = slparam['kappa_alpha']
-        self.params[-1].B0_alpha = slparam['B0_alpha']
-        self.params[-1].Pheat_alpha = slparam['Pheat_alpha']
-        self.params[-1].n20_alpha = slparam['n20_alpha']
+        self.params.H_fac = self.settings.H_fac
+        self.params.scaling_const = slparam['scaling_const']
+        self.params.M_i_alpha = slparam['M_i_alpha']
+        self.params.Ip_alpha = slparam['Ip_alpha']
+        self.params.R_alpha = slparam['R_alpha']
+        self.params.a_alpha = slparam['a_alpha']
+        self.params.kappa_alpha = slparam['kappa_alpha']
+        self.params.B0_alpha = slparam['B0_alpha']
+        self.params.Pheat_alpha = slparam['Pheat_alpha']
+        self.params.n20_alpha = slparam['n20_alpha']
         
         self.solve_popcons()
 
         if plot:
-            self.plot(-1)
+            self.plot()
 
     def solve_popcons(self) -> None:
 
@@ -1235,101 +1222,96 @@ class POPCON:
                     result.vloop[i,j] = params.get_Vloop(result.T_e_max[j], result.n_e_20_max[i])
                     result.betaN[i,j] = 100*params.get_BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
             return result
+                
+        params = self.params
+        rho = params.sqrtpsin
+        n_G = params.n_GR
+        n_e_avg_fac= params.volume_integral(rho, params.get_extprof(rho,1))/params.V
+        T_i_avg_fac = params.volume_integral(rho, params.get_extprof(rho,3))/params.V
+        T_e_avg_fac = params.volume_integral(rho, params.get_extprof(rho,4))/params.V
+        n_e_20 = np.linspace(self.settings.nmin_frac*n_G/n_e_avg_fac, self.settings.nmax_frac*n_G/n_e_avg_fac, self.settings.Nn)
+        T_i_keV = np.linspace(self.settings.Tmin_keV/T_i_avg_fac, self.settings.Tmax_keV/T_i_avg_fac, self.settings.NTi)
+        T_e_keV = T_i_keV/self.settings.tipeak_over_tepeak
+
+        self.output = POPCON_data()
+        self.output.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
+        self.output.n_e_20_max = n_e_20
+        self.output.n_e_20_avg = n_e_20 * n_e_avg_fac
+        self.output.T_i_max = T_i_keV
+        self.output.T_i_avg = T_i_keV * T_i_avg_fac
+        self.output.T_e_max = T_e_keV
+        self.output.T_e_avg = T_e_keV * T_e_avg_fac
         
-        self.outputs = []
-            
-        for i_params in range(len(self.params)):
-            params = self.params[i_params]
-            rho = params.sqrtpsin
-            n_G = params.n_GR
-            n_e_avg_fac= params.volume_integral(rho, params.get_extprof(rho,1))/params.V
-            T_i_avg_fac = params.volume_integral(rho, params.get_extprof(rho,3))/params.V
-            T_e_avg_fac = params.volume_integral(rho, params.get_extprof(rho,4))/params.V
-            n_e_20 = np.linspace(self.settings.nmin_frac*n_G/n_e_avg_fac, self.settings.nmax_frac*n_G/n_e_avg_fac, self.settings.Nn)
-            T_i_keV = np.linspace(self.settings.Tmin_keV/T_i_avg_fac, self.settings.Tmax_keV/T_i_avg_fac, self.settings.NTi)
-            T_e_keV = T_i_keV/self.settings.tipeak_over_tepeak
+        Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
+                                n_e_20, T_i_keV, self.settings.accel, 
+                                self.settings.err, self.settings.maxit)
 
-            result = POPCON_data()
-            result.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
-            result.n_e_20_max = n_e_20
-            result.n_e_20_avg = n_e_20 * n_e_avg_fac
-            result.T_i_max = T_i_keV
-            result.T_i_avg = T_i_keV * T_i_avg_fac
-            result.T_e_max = T_e_keV
-            result.T_e_avg = T_e_keV * T_e_avg_fac
-            
-            Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.accel, 
-                                    self.settings.err, self.settings.maxit)
+        self.output.Paux = Paux
+        self.output.n_i_20_avg = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.n_i_20_max = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pfusion = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pbrems = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pimprad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Wtot = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.tauE = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pconf = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Ploss = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pdd = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pdt = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Palpha = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Psol = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.f_rad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Q = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.H89 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.H98 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.vloop = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.betaN = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
 
-            result.Paux = Paux
-            result.n_i_20_avg = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.n_i_20_max = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pfusion = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pbrems = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pimprad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Wtot = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.tauE = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pconf = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Ploss = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pdd = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Pdt = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Palpha = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Psol = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.f_rad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.Q = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.H89 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.H98 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.vloop = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-            result.betaN = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-
-            result = populate_outputs(params, result, self.settings.Nn, self.settings.NTi)
-
-            self.outputs.append(result)
+        result = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi)
 
         pass
 
     def single_point(self, i_params:int, n_G_frac:float, Ti_av:float, plot:bool=True, show:bool=True) -> None:
         
-        n_G = self.params[i_params].n_GR
-        rho = self.params[i_params].sqrtpsin
-        n_e_avg_fac = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 1))/self.params[i_params].V
+        n_G = self.params.n_GR
+        rho = self.params.sqrtpsin
+        n_e_avg_fac = self.params.volume_integral(rho, self.params.get_extprof(rho, 1))/self.params.V
         n_e_20 = n_G_frac*n_G/n_e_avg_fac
-        T_i_avg_fac = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 3))/self.params[i_params].V
-        n_i_avg_fac = self.params[i_params].volume_integral(rho, self.params[i_params].get_extprof(rho, 2))/self.params[i_params].V
+        T_i_avg_fac = self.params.volume_integral(rho, self.params.get_extprof(rho, 3))/self.params.V
+        n_i_avg_fac = self.params.volume_integral(rho, self.params.get_extprof(rho, 2))/self.params.V
         T_i_keV = Ti_av/T_i_avg_fac
-        T_e_keV = T_i_keV/self.params[i_params].tipeak_over_tepeak
-        dil = self.params[i_params].get_plasma_dilution(T_e_keV)
+        T_e_keV = T_i_keV/self.params.tipeak_over_tepeak
+        dil = self.params.get_plasma_dilution(T_e_keV)
         n_i_20 = n_e_20*dil
-        line_avg_fac = np.average(self.params[i_params].get_extprof(rho, 1))
+        line_avg_fac = np.average(self.params.get_extprof(rho, 1))
 
-        Paux = self.params[i_params].P_aux_relax_impfrac(n_e_20,T_i_keV,self.settings.accel,self.settings.err,self.settings.maxit)
+        Paux = self.params.P_aux_relax_impfrac(n_e_20,T_i_keV,self.settings.accel,self.settings.err,self.settings.maxit)
         
-        Pfusion = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion(rho, T_i_keV, n_i_20))
-        Pfusion_heating = self.params[i_params].volume_integral(rho,self.params[i_params]._P_fusion_heating(rho, T_i_keV, n_i_20))
-        Pohmic = self.params[i_params].volume_integral(rho,self.params[i_params]._P_OH_prof(rho, T_e_keV, n_e_20))
-        Pbrems = self.params[i_params].volume_integral(rho,self.params[i_params]._P_brem_rad(rho, T_e_keV, n_e_20))
-        Pimprad = self.params[i_params].volume_integral(rho,self.params[i_params]._P_impurity_rad(rho, T_e_keV, n_e_20))
-        Prad = self.params[i_params].volume_integral(rho,self.params[i_params]._P_rad(rho, T_e_keV, n_e_20))
+        Pfusion = self.params.volume_integral(rho,self.params._P_fusion(rho, T_i_keV, n_i_20))
+        Pfusion_heating = self.params.volume_integral(rho,self.params._P_fusion_heating(rho, T_i_keV, n_i_20))
+        Pohmic = self.params.volume_integral(rho,self.params._P_OH_prof(rho, T_e_keV, n_e_20))
+        Pbrems = self.params.volume_integral(rho,self.params._P_brem_rad(rho, T_e_keV, n_e_20))
+        Pimprad = self.params.volume_integral(rho,self.params._P_impurity_rad(rho, T_e_keV, n_e_20))
+        Prad = self.params.volume_integral(rho,self.params._P_rad(rho, T_e_keV, n_e_20))
         Pheat = Pfusion_heating + Pohmic + Paux - Pbrems
-        Palpha = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
-        Pdd = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
-        Pdd += self.params[i_params].volume_integral(rho,self.params[i_params]._P_DDpT_prof(rho, T_i_keV, n_i_20))
-        Pdt = self.params[i_params].volume_integral(rho,self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20))
-        tauE = self.params[i_params].tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
-        Wtot = self.params[i_params].volume_integral(rho,self.params[i_params]._W_tot_prof(rho,T_i_keV,n_e_20))
+        Palpha = self.params.volume_integral(rho,self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
+        Pdd = self.params.volume_integral(rho,self.params._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
+        Pdd += self.params.volume_integral(rho,self.params._P_DDpT_prof(rho, T_i_keV, n_i_20))
+        Pdt = self.params.volume_integral(rho,self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20))
+        tauE = self.params.tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
+        Wtot = self.params.volume_integral(rho,self.params._W_tot_prof(rho,T_i_keV,n_e_20))
         Pconf = Wtot/tauE
         Ploss = Pconf
         f_rad = Prad/Ploss
-        Q = self.params[i_params].Q_fusion(T_i_keV, n_e_20, Paux)
-        H89 = tauE/self.params[i_params].tauE_H89(Pheat,n_e_20*line_avg_fac)
-        H98 = tauE/self.params[i_params].tauE_H98(Pheat,n_e_20*line_avg_fac)
-        vloop = self.params[i_params].get_Vloop(T_e_keV, n_e_20)
-        betaN = 100*self.params[i_params].get_BetaN(T_i_keV, n_e_20) # in percent
+        Q = self.params.Q_fusion(T_i_keV, n_e_20, Paux)
+        H89 = tauE/self.params.tauE_H89(Pheat,n_e_20*line_avg_fac)
+        H98 = tauE/self.params.tauE_H98(Pheat,n_e_20*line_avg_fac)
+        vloop = self.params.get_Vloop(T_e_keV, n_e_20)
+        betaN = 100*self.params.get_BetaN(T_i_keV, n_e_20) # in percent
         pstring = \
 f"""
 Params:
@@ -1344,7 +1326,7 @@ Solution:
 P_aux = {Paux:.2f} MW
 P_fusion = {Pfusion:.2f} MW
 P_SOL = {Ploss - Prad:.2f} MW
-P_load = {(Ploss-Prad)/self.params[i_params].A:.3f} MW/m^2
+P_load = {(Ploss-Prad)/self.params.A:.3f} MW/m^2
 P_ohmic = {Pohmic:.3f} MW
 P_brems = {Pbrems:.3f} MW
 P_imprad = {Pimprad:.3f} MW
@@ -1365,18 +1347,18 @@ betaN = {betaN:.3f}
         print(pstring)
 
         if plot:
-            Pfusion_prof = self.params[i_params]._P_fusion(rho, T_i_keV, n_i_20)
-            Pfusion_heating_prof = self.params[i_params]._P_fusion_heating(rho, T_i_keV, n_i_20)
-            Pohmic_prof = self.params[i_params]._P_OH_prof(rho, T_e_keV, n_e_20)
-            Prad_prof = self.params[i_params]._P_rad(rho, T_e_keV, n_e_20)
-            Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.params[i_params].V
-            Palpha_prof = self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20)*3.52e3/(3.52e3 + 14.06e3)
-            Pdt_prof = self.params[i_params]._P_DTnHe4_prof(rho, T_i_keV, n_i_20)
-            niprof = n_i_20*self.params[i_params].get_extprof(rho, 2)
-            neprof = n_e_20*self.params[i_params].get_extprof(rho, 1)
-            Tiprof = T_i_keV*self.params[i_params].get_extprof(rho, 3)
-            Teprof = T_e_keV*self.params[i_params].get_extprof(rho, 4)
-            qprof = self.params[i_params].get_extprof(rho, 5)
+            Pfusion_prof = self.params._P_fusion(rho, T_i_keV, n_i_20)
+            Pfusion_heating_prof = self.params._P_fusion_heating(rho, T_i_keV, n_i_20)
+            Pohmic_prof = self.params._P_OH_prof(rho, T_e_keV, n_e_20)
+            Prad_prof = self.params._P_rad(rho, T_e_keV, n_e_20)
+            Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.params.V
+            Palpha_prof = self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20)*3.52e3/(3.52e3 + 14.06e3)
+            Pdt_prof = self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20)
+            niprof = n_i_20*self.params.get_extprof(rho, 2)
+            neprof = n_e_20*self.params.get_extprof(rho, 1)
+            Tiprof = T_i_keV*self.params.get_extprof(rho, 3)
+            Teprof = T_e_keV*self.params.get_extprof(rho, 4)
+            qprof = self.params.get_extprof(rho, 5)
 
             # Density and temperatures
             # 
@@ -1396,8 +1378,8 @@ betaN = {betaN:.3f}
             
             # Power profiles
             fig, ax = plt.subplots(figsize=(8,6))
-            # V_enclosed = self.params[i_params].get_extprof(rho, -1)
-            radius = rho*self.params[i_params].a
+            # V_enclosed = self.params.get_extprof(rho, -1)
+            radius = rho*self.params.a
             ax.plot(radius, Pfusion_prof, 'k-', label=r'$P_{\text{fusion}}$')
             ax.plot(radius, Pohmic_prof, 'r-', label=r'$P_{\text{ohmic}}$')
             ax.plot(radius, Prad_prof, '-',color='purple', label=r'$P_{\text{rad}}$')
@@ -1415,30 +1397,30 @@ betaN = {betaN:.3f}
     # Plotting
     #-------------------------------------------------------------------
 
-    def plot(self, i_params:int, show:bool=True, names=None):
+    def plot(self, show:bool=True, savefig:str='', names=None):
         figsize = self.plotsettings.figsize
         fig, ax = plt.subplots(figsize=figsize)
         if self.plotsettings.xax == 'T_i_av':
-            xx = self.outputs[i_params].T_i_avg
+            xx = self.output.T_i_avg
         elif self.plotsettings.xax == 'T_i_ax':
-            xx = self.outputs[i_params].T_i_max
+            xx = self.output.T_i_max
         elif self.plotsettings.xax == 'T_e_av':
-            xx = self.outputs[i_params].T_e_avg
+            xx = self.output.T_e_avg
         elif self.plotsettings.xax == 'T_e_ax':
-            xx = self.outputs[i_params].T_e_max
+            xx = self.output.T_e_max
         else:
             raise ValueError("Invalid x-axis. Change xax in plotsettings.")
         
         if self.plotsettings.yax == 'n20_av':
-            yy = self.outputs[i_params].n_e_20_avg
+            yy = self.output.n_e_20_avg
         elif self.plotsettings.yax == 'n20_ax':
-            yy = self.outputs[i_params].n_e_20_max
+            yy = self.output.n_e_20_max
         elif self.plotsettings.yax == 'nG':
-            yy = self.outputs[i_params].n_G_frac
+            yy = self.output.n_G_frac
         else:
             raise ValueError("Invalid y-axis. Change yax in plotsettings.")
         xx, yy = np.meshgrid(xx,yy)
-        mask = np.logical_or(np.isnan(self.outputs[i_params].Paux),self.outputs[i_params].Paux >=99998.)
+        mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
         if self.plotsettings.fill_invalid:
             ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.05)
         if names is None:
@@ -1449,7 +1431,7 @@ betaN = {betaN:.3f}
                 continue
             print("Plotting",name)
             plotoptions = [opdict['color'],opdict['linewidth'],opdict['label'],opdict['fontsize'],opdict['fmt']]
-            data = getattr(self.outputs[i_params],name)
+            data = getattr(self.output,name)
             data = np.ma.array(data,mask=mask)
             if opdict['spacing'] == 'lin':
                 if opdict['scale'] == 'minmax':
@@ -1491,7 +1473,7 @@ betaN = {betaN:.3f}
             ax.set_ylabel(r'$\langle n\rangle /n_G$')
         else:
             pass
-        p = self.params[i_params]
+        p = self.params
 
         # 1 = D-D, 2 = D-T, 3 = D-He3
         fueldict = {1:'D-D', 2:'D-T', 3:'D-He3'}
@@ -1499,7 +1481,9 @@ betaN = {betaN:.3f}
         ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
         infoboxtext = f"$I_p$ = {p.Ip:.2f}\n$B_0$ = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\n$\\kappa$ = {p.kappa:.2f}\n$\\delta$ = {p.delta:.2f}\n$M_i$ = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\n<Zeff>={p.Zeff(np.average(xx)):.2f}"
         ax.text(x=np.max(xx)+(np.max(xx)-np.min(xx))/64,y=np.min(yy),s=infoboxtext, bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8))
-
+        fig.tight_layout()
+        if savefig != '':
+            plt.savefig(savefig)
         if show:
             plt.show()
 
@@ -1513,42 +1497,97 @@ betaN = {betaN:.3f}
             ax.clabel(contour,inline=1,fmt=fmt,fontsize=fontsize)
         pass
     
-    def custom_plot(self, fig, ax, i_params:int, data, levels, color='k', linewidth=1., label:str='custom', fontsize:int=11, fmt:str='%1.2f'):
+    def custom_plot(self, fig, ax, data, levels, color='k', linewidth=1., label:str='custom', fontsize:int=11, fmt:str='%1.2f'):
         if self.plotsettings.xax == 'T_i_av':
-            xx = self.outputs[i_params].T_i_avg
+            xx = self.output.T_i_avg
         elif self.plotsettings.xax == 'T_i_ax':
-            xx = self.outputs[i_params].T_i_max
+            xx = self.output.T_i_max
         elif self.plotsettings.xax == 'T_e_av':
-            xx = self.outputs[i_params].T_e_avg
+            xx = self.output.T_e_avg
         elif self.plotsettings.xax == 'T_e_ax':
-            xx = self.outputs[i_params].T_e_max
+            xx = self.output.T_e_max
         else:
             raise ValueError("Invalid x-axis. Change xax in plotsettings.")
         
         if self.plotsettings.yax == 'n20_av':
-            yy = self.outputs[i_params].n_e_20_avg
+            yy = self.output.n_e_20_avg
         elif self.plotsettings.yax == 'n20_ax':
-            yy = self.outputs[i_params].n_e_20_max
+            yy = self.output.n_e_20_max
         elif self.plotsettings.yax == 'nG':
-            yy = self.outputs[i_params].n_G_frac
+            yy = self.output.n_G_frac
         else:
             raise ValueError("Invalid y-axis. Change yax in plotsettings.")
         xx, yy = np.meshgrid(xx,yy)
-        mask = np.logical_or(np.isnan(self.outputs[i_params].Paux),self.outputs[i_params].Paux >=99998.)
+        mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
         self.plot_contours(True, ax, np.ma.array(data,mask=mask), xx, yy, levels, *[color,linewidth,label,fontsize,fmt])
 
         return fig, ax
-
-    # def plot_profiles(self, i_params:int, show:bool=True) -> None:
 
     #-------------------------------------------------------------------
     # File I/O
     #-------------------------------------------------------------------
 
-    def save_file(self, filename: str) -> None:
-        pass
+    def write_output(self, name:str='', archive:bool=True):
+        if name == '':
+            name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
 
-    def load_file(self, filename: str) -> None:
+        outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+        # Check if directory exists
+        exists = outputsdir.joinpath(name).exists()
+        if not exists:
+            outputsdir.joinpath(name).mkdir()
+
+        savedir = outputsdir.joinpath(name)
+
+        shutil.copyfile(self.settingsfile, savedir.joinpath('settings.yaml'))
+        shutil.copyfile(self.plotsettingsfile, savedir.joinpath('plotsettings.yaml'))
+        shutil.copyfile(self.scalinglawfile, savedir.joinpath('scalinglaws.yaml'))
+        
+        writedata = {}
+        keys = POPCON_data_spec
+        for key in keys:
+            writedata[key[0]] = getattr(self.output,key[0])
+        
+        with open(savedir.joinpath('arrays.json'), 'w') as f:
+            json.dump(writedata, f, cls=nj.CompactJSONEncoder)
+
+        if self.settings.gfilename != '':
+            shutil.copyfile(self.settings.gfilename, savedir.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
+        if self.settings.profsfilename != '':
+            shutil.copyfile(self.settings.profsfilename, savedir.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
+
+        self.plot(show=False, savefig=str(savedir.joinpath('POPCON_plot.pdf')))
+        plt.close('all')
+
+        if archive:
+            shutil.make_archive(name, 'zip', savedir, outputsdir)
+            shutil.rmtree(savedir)
+            shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
+
+    def read_output(self, name: str) -> None:
+        outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+        if name.endswith('.zip'):
+            outputsdir.joinpath(name[:-4]).mkdir()
+            shutil.unpack_archive(outputsdir.joinpath(name), outputsdir.joinpath(name[:-4]))
+            name = name[:-4]
+        namepath = outputsdir.joinpath(name)
+        self.settingsfile = str(namepath.joinpath('settings.yaml'))
+        self.plotsettingsfile = str(namepath.joinpath('plotsettings.yaml'))
+        self.scalinglawfile = str(namepath.joinpath('scalinglaws.yaml'))
+        self.settings = POPCON_settings(self.settingsfile)
+        self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
+        self.__get_scaling_laws(self.scalinglawfile)
+        
+        self.output = POPCON_data()
+        with open(namepath.joinpath('arrays.json'), 'r') as f:
+            data = json.load(f)
+            for key in data.keys():
+                setattr(self.output, key, np.array(data[key], dtype=np.float64))
+        if self.settings.gfilename != '':
+            self.settings.gfilename = str(namepath.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
+        if self.settings.profsfilename != '':
+            self.settings.profsfilename = str(namepath.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
+        
         pass
 
     #-------------------------------------------------------------------
@@ -1566,20 +1605,20 @@ betaN = {betaN:.3f}
         self.scalinglaws = data
 
     def __setup_params(self) -> None:
-        self.params.append(POPCON_params())
-        self.params[-1].R = self.settings.R
-        self.params[-1].a = self.settings.a
-        self.params[-1].kappa = self.settings.kappa
-        self.params[-1].delta = self.settings.delta
-        self.params[-1].B0 = self.settings.B0
-        self.params[-1].Ip = self.settings.Ip
-        self.params[-1].M_i = self.settings.M_i
-        self.params[-1].tipeak_over_tepeak = self.settings.tipeak_over_tepeak
-        self.params[-1].fuel = self.settings.fuel
-        self.params[-1].impurityfractions = self.settings.impurityfractions
-        self.params[-1].verbosity = self.settings.verbosity
+        self.params = POPCON_params()
+        self.params.R = self.settings.R
+        self.params.a = self.settings.a
+        self.params.kappa = self.settings.kappa
+        self.params.delta = self.settings.delta
+        self.params.B0 = self.settings.B0
+        self.params.Ip = self.settings.Ip
+        self.params.M_i = self.settings.M_i
+        self.params.tipeak_over_tepeak = self.settings.tipeak_over_tepeak
+        self.params.fuel = self.settings.fuel
+        self.params.impurityfractions = self.settings.impurityfractions
+        self.params.verbosity = self.settings.verbosity
 
-    def __get_profiles(self, i_params) -> None:
+    def __get_profiles(self) -> None:
         profstable = read_profsfile(self.settings.profsfilename)
         ne = np.asarray(profstable['n_e'])
         ne = ne/ne[0]
@@ -1594,14 +1633,14 @@ betaN = {betaN:.3f}
         ni_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ni)
         Ti_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,Ti)
         Te_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,Te)
-        self.params[i_params]._addextprof(ne_sqrtpsin,1)
-        self.params[i_params]._addextprof(ni_sqrtpsin,2)
-        self.params[i_params]._addextprof(Ti_sqrtpsin,3)
-        self.params[i_params]._addextprof(Te_sqrtpsin,4)
+        self.params._addextprof(ne_sqrtpsin,1)
+        self.params._addextprof(ni_sqrtpsin,2)
+        self.params._addextprof(Ti_sqrtpsin,3)
+        self.params._addextprof(Te_sqrtpsin,4)
 
         pass
 
-    def __get_geometry(self, i_params) -> None:
+    def __get_geometry(self) -> None:
         gfile = read_eqdsk(self.settings.gfilename)
         psin, volgrid, agrid, _ = get_fluxvolumes(gfile)
         sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
@@ -1624,14 +1663,14 @@ betaN = {betaN:.3f}
         psiJ = np.linspace(0,1,J.shape[0])
         Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
         Jr = Jr/Jr[0]
-        Ipint = np.trapz(Jr,2*np.pi*(self.params[-1].a*sqrtpsin)**2)
+        Ipint = np.trapz(Jr,2*np.pi*(self.params.a*sqrtpsin)**2)
         Jr = np.abs(Jr/Ipint)
 
-        self.params[i_params]._addextprof(sqrtpsin,-2)
-        self.params[i_params]._addextprof(volgrid,-1)
-        self.params[i_params]._addextprof(Jr,0)
-        self.params[i_params]._addextprof(qr,5)
-        self.params[i_params]._addextprof(agrid,-3)
+        self.params._addextprof(sqrtpsin,-2)
+        self.params._addextprof(volgrid,-1)
+        self.params._addextprof(Jr,0)
+        self.params._addextprof(qr,5)
+        self.params._addextprof(agrid,-3)
         pass
 
     def __check_settings(self) -> None:
@@ -1643,168 +1682,125 @@ betaN = {betaN:.3f}
             self.plotsettingsfile = plotsettingsfile
         else:
             self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
-
         pass
 
-    def write_output(self, output:int=-1, name:str='', archive:bool=True):
-        if name == '':
-            name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
+# def copy_params(params:POPCON_params) -> POPCON_params:
+#     new = POPCON_params()
+#     # Populate
+#     try:
+#         new.R = params.R
+#         new.a = params.a
+#         new.kappa = params.kappa
+#         new.delta = params.delta
+#         new.B0 = params.B0
+#         new.Ip = params.Ip
+#         new.M_i = params.M_i
+#         # new.f_LH = params.f_LH
+#         new.tipeak_over_tepeak = params.tipeak_over_tepeak
+#         new.fuel = params.fuel
 
-
-        outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
-        # Check if directory exists
-        exists = outputsdir.joinpath(name).exists()
-        if not exists:
-            outputsdir.joinpath(name).mkdir()
-
-        savedir = outputsdir.joinpath(name)
-
-        shutil.copyfile(self.settingsfile, savedir.joinpath('settings.yaml'))
-        shutil.copyfile(self.plotsettingsfile, savedir.joinpath('plotsettings.yaml'))
-        shutil.copyfile(self.sacalinglawfile, savedir.joinpath('scalinglaws.yaml'))
+#         new.impurityfractions = params.impurityfractions
+#         new.rdefined = params.rdefined
+#         new.volgriddefined = params.volgriddefined
+#         new._jdefined = params._jdefined
+#         new._nedefined = params._nedefined
+#         new._nidefined = params._nidefined
+#         new._Tidefined = params._Tidefined
+#         new._Tedefined = params._Tedefined
+#         new._qdefined = params._qdefined
+#         new._bmaxdefined = params._bmaxdefined
+#         new._bavgdefined = params._bavgdefined
         
-        writedata = {}
-        keys = POPCON_data_spec
-        for key in keys:
-            writedata[key[0]] = getattr(self.outputs[output],key[0])
+#         if new.rdefined:
+#             new.sqrtpsin = params.sqrtpsin
+#             new.nr = params.nr
+#         if new.volgriddefined:
+#             new.volgrid = params.volgrid
+#         if new._jdefined:
+#             new.extprof_j = params.extprof_j
+#         if new._nedefined:
+#             new.extprof_ne = params.extprof_ne
+#         if new._nidefined:
+#             new.extprof_ni = params.extprof_ni
+#         if new._Tidefined:
+#             new.extprof_Ti = params.extprof_Ti
+#         if new._Tedefined:
+#             new.extprof_Te = params.extprof_Te
+#         if new._qdefined:
+#             new.extprof_q = params.extprof_q
+#         if new._bmaxdefined:
+#             new.bmaxprof = params.bmaxprof
+#         if new._bavgdefined:
+#             new.bavgprof = params.bavgprof
+#         try: new.j_alpha1 = params.j_alpha1
+#         except: pass
+#         try: new.j_alpha2 = params.j_alpha2
+#         except: pass
+#         try: new.j_offset = params.j_offset
+#         except: pass
+#         try: new.ne_alpha1 = params.ne_alpha1
+#         except: pass
+#         try: new.ne_alpha2 = params.ne_alpha2
+#         except: pass
+#         try: new.ne_offset = params.ne_offset
+#         except: pass
+#         try: new.ni_alpha1 = params.ni_alpha1
+#         except: pass
+#         try: new.ni_alpha2 = params.ni_alpha2
+#         except: pass
+#         try: new.ni_offset = params.ni_offset
+#         except: pass
+#         try: new.Ti_alpha1 = params.Ti_alpha1
+#         except: pass
+#         try: new.Ti_alpha2 = params.Ti_alpha2
+#         except: pass
+#         try: new.Ti_offset = params.Ti_offset
+#         except: pass
+#         try: new.Te_alpha1 = params.Te_alpha1
+#         except: pass
+#         try: new.Te_alpha2 = params.Te_alpha2
+#         except: pass
+#         try: new.Te_offset = params.Te_offset
+#         except: pass
+#         try: new._jextprof = params._jextprof
+#         except: pass
+#         try: new._neextprof = params._neextprof
+#         except: pass
+#         try: new._niextprof = params._niextprof
+#         except: pass
+#         try: new._Tiextprof = params._Tiextprof
+#         except: pass
+#         try: new._Teextprof = params._Teextprof
+#         except: pass
+
+#         new.j_alpha1 = params.j_alpha1
+#         new.j_alpha2 = params.j_alpha2
+#         new.j_offset = params.j_offset
+#         new.ne_alpha1 = params.ne_alpha1
+#         new.ne_alpha2 = params.ne_alpha2
+#         new.ne_offset = params.ne_offset
+#         new.ni_alpha1 = params.ni_alpha1
+#         new.ni_alpha2 = params.ni_alpha2
+#         new.ni_offset = params.ni_offset
+#         new.Ti_alpha1 = params.Ti_alpha1
+#         new.Ti_alpha2 = params.Ti_alpha2
+#         new.Ti_offset = params.Ti_offset
+#         new.Te_alpha1 = params.Te_alpha1
+#         new.Te_alpha2 = params.Te_alpha2
+#         new.Te_offset = params.Te_offset
         
-        with open(savedir.joinpath('arrays.json'), 'w') as f:
-            json.dump(writedata, f, cls=nj.CompactJSONEncoder)
+#         new.H_fac = params.H_fac
+#         new.scaling_const = params.scaling_const
+#         new.M_i_alpha = params.M_i_alpha
+#         new.Ip_alpha = params.Ip_alpha
+#         new.R_alpha = params.R_alpha
+#         new.a_alpha = params.a_alpha
+#         new.kappa_alpha = params.kappa_alpha
+#         new.B0_alpha = params.B0_alpha
+#         new.Pheat_alpha = params.Pheat_alpha
+#         new.n20_alpha = params.n20_alpha
 
-        if self.settings.gfilename != '':
-            shutil.copyfile(self.settings.gfilename, savedir.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
-        if self.settings.profsfilename != '':
-            shutil.copyfile(self.settings.profsfilename, savedir.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
-
-        if archive:
-            shutil.make_archive(name, 'zip', savedir, outputsdir)
-            shutil.rmtree(savedir)
-            shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
-
-
-
-def copy_params(params:POPCON_params) -> POPCON_params:
-    new = POPCON_params()
-    # Populate
-    try:
-        new.R = params.R
-        new.a = params.a
-        new.kappa = params.kappa
-        new.delta = params.delta
-        new.B0 = params.B0
-        new.Ip = params.Ip
-        new.M_i = params.M_i
-        # new.f_LH = params.f_LH
-        new.tipeak_over_tepeak = params.tipeak_over_tepeak
-        new.fuel = params.fuel
-
-        new.impurityfractions = params.impurityfractions
-        new.rdefined = params.rdefined
-        new.volgriddefined = params.volgriddefined
-        new._jdefined = params._jdefined
-        new._nedefined = params._nedefined
-        new._nidefined = params._nidefined
-        new._Tidefined = params._Tidefined
-        new._Tedefined = params._Tedefined
-        new._qdefined = params._qdefined
-        new._bmaxdefined = params._bmaxdefined
-        new._bavgdefined = params._bavgdefined
-        
-        if new.rdefined:
-            new.sqrtpsin = params.sqrtpsin
-            new.nr = params.nr
-        if new.volgriddefined:
-            new.volgrid = params.volgrid
-        if new._jdefined:
-            new.extprof_j = params.extprof_j
-        if new._nedefined:
-            new.extprof_ne = params.extprof_ne
-        if new._nidefined:
-            new.extprof_ni = params.extprof_ni
-        if new._Tidefined:
-            new.extprof_Ti = params.extprof_Ti
-        if new._Tedefined:
-            new.extprof_Te = params.extprof_Te
-        if new._qdefined:
-            new.extprof_q = params.extprof_q
-        if new._bmaxdefined:
-            new.bmaxprof = params.bmaxprof
-        if new._bavgdefined:
-            new.bavgprof = params.bavgprof
-        try: new.j_alpha1 = params.j_alpha1
-        except: pass
-        try: new.j_alpha2 = params.j_alpha2
-        except: pass
-        try: new.j_offset = params.j_offset
-        except: pass
-        try: new.ne_alpha1 = params.ne_alpha1
-        except: pass
-        try: new.ne_alpha2 = params.ne_alpha2
-        except: pass
-        try: new.ne_offset = params.ne_offset
-        except: pass
-        try: new.ni_alpha1 = params.ni_alpha1
-        except: pass
-        try: new.ni_alpha2 = params.ni_alpha2
-        except: pass
-        try: new.ni_offset = params.ni_offset
-        except: pass
-        try: new.Ti_alpha1 = params.Ti_alpha1
-        except: pass
-        try: new.Ti_alpha2 = params.Ti_alpha2
-        except: pass
-        try: new.Ti_offset = params.Ti_offset
-        except: pass
-        try: new.Te_alpha1 = params.Te_alpha1
-        except: pass
-        try: new.Te_alpha2 = params.Te_alpha2
-        except: pass
-        try: new.Te_offset = params.Te_offset
-        except: pass
-        try: new._jextprof = params._jextprof
-        except: pass
-        try: new._neextprof = params._neextprof
-        except: pass
-        try: new._niextprof = params._niextprof
-        except: pass
-        try: new._Tiextprof = params._Tiextprof
-        except: pass
-        try: new._Teextprof = params._Teextprof
-        except: pass
-
-        new.j_alpha1 = params.j_alpha1
-        new.j_alpha2 = params.j_alpha2
-        new.j_offset = params.j_offset
-        new.ne_alpha1 = params.ne_alpha1
-        new.ne_alpha2 = params.ne_alpha2
-        new.ne_offset = params.ne_offset
-        new.ni_alpha1 = params.ni_alpha1
-        new.ni_alpha2 = params.ni_alpha2
-        new.ni_offset = params.ni_offset
-        new.Ti_alpha1 = params.Ti_alpha1
-        new.Ti_alpha2 = params.Ti_alpha2
-        new.Ti_offset = params.Ti_offset
-        new.Te_alpha1 = params.Te_alpha1
-        new.Te_alpha2 = params.Te_alpha2
-        new.Te_offset = params.Te_offset
-        
-        new.H_fac = params.H_fac
-        new.scaling_const = params.scaling_const
-        new.M_i_alpha = params.M_i_alpha
-        new.Ip_alpha = params.Ip_alpha
-        new.R_alpha = params.R_alpha
-        new.a_alpha = params.a_alpha
-        new.kappa_alpha = params.kappa_alpha
-        new.B0_alpha = params.B0_alpha
-        new.Pheat_alpha = params.Pheat_alpha
-        new.n20_alpha = params.n20_alpha
-
-    except Exception as e:
-        raise e
+#     except Exception as e:
+#         raise e
     
-    return new
-
-
-if __name__ == '__main__':
-    print('Hello, World!')
-    pass
+#     return new
