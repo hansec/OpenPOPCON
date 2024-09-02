@@ -3,6 +3,8 @@
 # Machine Paramters
 #-----------------------------------------------------------------------
 
+name: "C-mod NT"
+
 R: 0.8 # major radius in meters
 a: 0.266664 # minor radius in meters
 kappa: 1.7 # elongation
