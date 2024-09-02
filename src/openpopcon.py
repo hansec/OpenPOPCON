@@ -1527,16 +1527,25 @@ betaN = {betaN:.3f}
     # File I/O
     #-------------------------------------------------------------------
 
-    def write_output(self, name:str='', archive:bool=True):
+    def write_output(self, name:str='', archive:bool=True, overwrite:bool=False) -> None:
         if name == '':
             name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
 
         outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
         # Check if directory exists
-        exists = outputsdir.joinpath(name).exists()
-        if not exists:
+        direxists = outputsdir.joinpath(name).exists()
+        zipexists = outputsdir.joinpath(name + '.zip').exists()
+        if not (direxists or zipexists):
             outputsdir.joinpath(name).mkdir()
-
+        elif overwrite:
+                if zipexists:
+                    outputsdir.joinpath(name + '.zip').unlink()
+                if direxists:
+                    shutil.rmtree(outputsdir.joinpath(name))
+                outputsdir.joinpath(name).mkdir()
+        else:
+            raise ValueError(f"{'Archive'*zipexists}{' and '*zipexists*direxists}{'Directory'*direxists} already exist{'s'*(not (direxists and zipexists))}. Set overwrite=True to overwrite.")
+        
         savedir = outputsdir.joinpath(name)
 
         shutil.copyfile(self.settingsfile, savedir.joinpath('settings.yaml'))
@@ -1560,7 +1569,7 @@ betaN = {betaN:.3f}
         plt.close('all')
 
         if archive:
-            shutil.make_archive(name, 'zip', savedir, outputsdir)
+            shutil.make_archive(name, 'zip', savedir)
             shutil.rmtree(savedir)
             shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
 
