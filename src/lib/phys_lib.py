@@ -11,7 +11,7 @@ TODO: Add D-He3 reaction to cross section / reactivity.
 """
 
 @nb.njit(cache=True)
-def get_Zeffs(T_e_keV:float):
+def get_Zeffs(T_e_keV):
 	"""
 	Function to obtain Zeff for each impurity, from Mavrin 2018.
 	"""
@@ -32,7 +32,7 @@ def get_Zeffs(T_e_keV:float):
 	return np.sum(zeff_coeffs*poly, axis=1)
 
 @nb.njit(cache=True)
-def get_rads(T_e_keV:float):
+def get_rads(T_e_keV):
 	"""
 	Function to get radiative power Lz per Zeff, from Mavrin 2018.
 	"""

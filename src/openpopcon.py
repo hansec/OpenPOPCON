@@ -16,6 +16,7 @@ Contributors:
 """
 
 import numpy as np
+import numpy.typing as npt
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import yaml
@@ -26,7 +27,6 @@ from .lib import phys_lib as phys
 import shutil
 import datetime
 from .lib import neat_json_encoder as nj
-
 
 DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml'])
 DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
@@ -40,11 +40,8 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('delta', nb.float64),
             ('B0', nb.float64),
             ('Ip', nb.float64),
-            # ('q_a', nb.float64),
             ('H', nb.float64),
             ('M_i', nb.float64),
-            # ('f_LH', nb.float64),
-            # ('nipeak_over_nepeak', nb.float64),
             ('tipeak_over_tepeak', nb.float64),
             ('fuel', nb.int64),
             ('sqrtpsin', nb.float64[:]),
@@ -52,7 +49,6 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('agrid', nb.float64[:]),
             ('nr', nb.int64),
             ('impurityfractions', nb.float64[:]),
-            # ('extprof_geoms', nb.boolean),
             ('geomsdefined', nb.boolean),
             ('rdefined', nb.boolean),
             ('volgriddefined', nb.boolean),
@@ -67,11 +63,6 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('_qdefined', nb.boolean),
             ('_bmaxdefined', nb.boolean),
             ('_bavgdefined', nb.boolean),
-            ('_jextprof', nb.boolean),
-            ('_neextprof', nb.boolean),
-            ('_niextprof', nb.boolean),
-            ('_Tiextprof', nb.boolean),
-            ('_Teextprof', nb.boolean),
             ('j_alpha1', nb.float64),
             ('j_alpha2', nb.float64),
             ('j_offset', nb.float64),
@@ -87,12 +78,12 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('Te_alpha1', nb.float64),
             ('Te_alpha2', nb.float64),
             ('Te_offset', nb.float64),
-            ('extprof_j', nb.float64[:]),
-            ('extprof_ne', nb.float64[:]),
-            ('extprof_ni', nb.float64[:]),
-            ('extprof_Te', nb.float64[:]),
-            ('extprof_Ti', nb.float64[:]),
-            ('extprof_q', nb.float64[:]),
+            ('j_prof', nb.float64[:]),
+            ('ne_prof', nb.float64[:]),
+            ('ni_prof', nb.float64[:]),
+            ('Te_prof', nb.float64[:]),
+            ('Ti_prof', nb.float64[:]),
+            ('q_prof', nb.float64[:]),
             ('bmaxprof', nb.float64[:]),
             ('bavgprof', nb.float64[:]),
             ('extprof_impfracs', nb.float64[:]),
@@ -108,9 +99,52 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('n20_alpha', nb.float64),
             ('verbosity', nb.int64),
           ]) # type: ignore
-class POPCON_params:
+class POPCON_algorithms:
     """
-    Physical parameters for the POPCON.
+    Class POPCON_algorithms
+
+    This class is the mathematical backbone of the OpenPOPCON code. It
+    is compiled with numba to provide fast calculations for scans. It is
+    best used in Jupyter notebooks or scripts where the user wants to
+    conduct a scan, as it is compiled at runtime; this means that the
+    first time the code executes, it will take a bit longer to compile,
+    but the subsequent runs will be much faster than raw Python code.
+
+    See __init__ for a list of parameters and their descriptions.
+
+    Properties:
+    - n_GR: Greenwald density in 10^20/m^3
+    - V: Plasma volume in m^3
+    - A: Last closed flux surface area in m^2
+
+    Profiles and integration:
+    - get_profile(rho, profid): Returns J, ne, Ti, etc profiles
+      for an array or single point, rho. Profile is interpolated.
+    - volume_integral(rho, func): Integrates a function of rho dV-like
+
+    Physical Quantities:
+    - rho: ~sqrt(psi_norm), normalized radial coordinate
+    - Zeff(T_e_keV): Effective ion charge
+    - plasma_dilution(T_e_keV): Plasma dilution factor; number of ions per electron
+    - eta_NC(rho, T_e_keV, n_e_20): Neoclassical resistivity in Ohm-m
+    - Vloop(T_e_keV, n_e_20): Loop voltage, P_ohmic / Ip
+    - BetaN(T_i_keV, n_e_20): Normalized beta, beta*a*B0/Ip
+    - tauE_scalinglaw(Pheat, n_e_20): Chosen confinement time scaling law
+    - tauE_H98(Pheat, n_e_20): H98y2 scaling law for comparison
+    - tauE_H89(Pheat, n_e_20): H89 scaling law for comparison
+
+    Power profiles:
+    - _W_tot_prof(rho, T_i_keV, n_e_20): Plasma energy per cubic meter
+    - _P_DDpT_prof(rho, T_i_keV, n_i_20): D-D -> p, T fusion power per cubic meter
+    - _P_DDnHe3_prof(rho, T_i_keV, n_i_20): D-D -> n, He3 fusion power per cubic meter
+    - _P_DTnHe4_prof(rho, T_i_keV, n_i_20): D-T -> n, He4 fusion power per cubic meter
+    - _P_fusion_heating(rho, T_i_keV, n_i_20): Fusion power absorbed by plasma per cubic meter (excluding neutrons)
+    - _P_fusion(rho, T_i_keV, n_i_20): Total fusion power per cubic meter (including neutrons)
+    - _P_brem_rad(rho, T_e_keV, n_e_20): Bremsstrahlung radiation power per cubic meter
+    - _P_impurity_rad(rho, T_e_keV, n_e_20): Impurity radiation power per cubic meter
+    - _P_rad(rho, T_e_keV, n_e_20): Total radiation power per cubic meter
+    - _P_OH_prof(rho, T_e_keV, n_e_20): Ohmic power per cubic meter
+    - Q_fusion(T_i_keV, n_e_20, Paux): Physical fusion gain factor
     """
     def __init__(self) -> None:
 
@@ -118,62 +152,52 @@ class POPCON_params:
         # Machine parameters
         #---------------------------------------------------------------
 
-        self.R: float
-        self.a: float
-        self.kappa: float
-        self.delta: float
-        self.B0: float
-        self.Ip: float
-        # self.q_a: float
-        self.M_i: float
-        # self.nipeak_over_nepeak: float
-        self.tipeak_over_tepeak: float
-        # 1 = D-D, 2 = D-T, 3 = D-He3
-        self.fuel: int
+        self.R: float                      # Major radius in meters
+        self.a: float                      # Minor radius in meters
+        self.kappa: float                  # Elongation
+        self.delta: float                  # Triangularity
+        self.B0: float                     # Magnetic field at axis in Tesla
+        self.Ip: float                     # Plasma current in MA
+        self.M_i: float                    # Ion mass in amu
+        self.tipeak_over_tepeak: float     # Ti/Te peak ratio
+        #*** 1 = D-D, 2 = D-T, 3 = D-He3 ***
+        self.fuel: int                     # Fuel cycle
 
 
         #---------------------------------------------------------------
         # Geometry/profile parameters
         #---------------------------------------------------------------
-        self.sqrtpsin = np.empty(0, dtype=np.float64)
-        self.volgrid = np.empty(0,dtype=np.float64)
-        self.agrid = np.empty(0,dtype=np.float64)
-        self.nr: int
+        self.sqrtpsin = np.empty(0, dtype=np.float64)           # sqrt(psin) corresponding to profiles
+        self.volgrid = np.empty(0,dtype=np.float64)             # Flux surface volumes
+        self.agrid = np.empty(0,dtype=np.float64)               # Flux surface surface areas
+        self.nr: int                                            # Number of radial points
         # 0 = He, 1 = Ne, 2 = Ar, 3 = Kr, 4 = Xe, 5 = W
-        self.impurityfractions = np.empty(6, dtype=np.float64)
-        # self.imcharges = np.empty(6, dtype=np.float64)
-        # self.extprof_geoms: bool
-        self.geomsdefined: bool = False
-        self.rdefined: bool = False
-        self.volgriddefined: bool = False
-        self.agriddefined: bool = False
+        self.impurityfractions = np.empty(6, dtype=np.float64)  # Impurity fractions for each impurity, relative to ion density
+        self.geomsdefined: bool = False                         # Whether geometry profiles are defined
+        self.rdefined: bool = False                             # Whether radial grid is defined
+        self.volgriddefined: bool = False                       # Whether volume grid is defined
+        self.agriddefined: bool = False                         # Whether area grid is defined
 
         # Impurity profiles are not implemented yet
-        self.extprof_imps: bool = False
-        self.impsdefined: bool = False
+        self.extprof_imps: bool = False                         # Whether impurity profiles are defined (not implemented)
+        self.impsdefined: bool = False                          # Whether impurity fractions are defined
 
-        self._jdefined: bool = False
-        self._nedefined: bool = False
-        self._nidefined: bool = False
-        self._Tidefined: bool = False
-        self._Tedefined: bool = False
-        self._qdefined: bool = False
-        self._bmaxdefined: bool = False
-        self._bavgdefined: bool = False
-
-        #---------------------------------------------------------------
-        # Whether to use external or parabolic profiles of each type
-        #---------------------------------------------------------------
-
-        self._jextprof: bool
-        self._neextprof: bool
-        self._niextprof: bool
-        self._Tiextprof: bool
-        self._Teextprof: bool
+        self._jdefined: bool = False                            # Whether J profile is defined
+        self._nedefined: bool = False                           # Whether ne profile is defined
+        self._nidefined: bool = False                           # Whether ni profile is defined
+        self._Tidefined: bool = False                           # Whether Ti profile is defined
+        self._Tedefined: bool = False                           # Whether Te profile is defined
+        self._qdefined: bool = False                            # Whether q profile is defined
+        self._bmaxdefined: bool = False                         # Whether b_max profile is defined (not implemented)
+        self._bavgdefined: bool = False                         # Whether b_avg profile is defined (not implemented)
 
         #---------------------------------------------------------------
         # Parameters for parabolic profiles case
         #---------------------------------------------------------------
+        """
+        Normalized parabolic profiles (or polynomial-like) are defined:
+        f(rho) = (1 - offset) * (1 + rho^alpha1)^alpha2 + offset
+        """
 
         self.j_alpha1: float = 2.
         self.j_alpha2: float = 3.
@@ -181,11 +205,11 @@ class POPCON_params:
 
         self.ne_alpha1: float = 2.
         self.ne_alpha2: float = 1.5
-        self.ne_offset: float = 0.
+        self.ne_offset: float = 0.3
 
         self.ni_alpha1: float = 2.
         self.ni_alpha2: float = 1.5
-        self.ni_offset: float = 0.
+        self.ni_offset: float = 0.3
 
         self.Ti_alpha1: float = 2.
         self.Ti_alpha2: float = 1.5
@@ -196,74 +220,78 @@ class POPCON_params:
         self.Te_offset: float = 0.
 
         #---------------------------------------------------------------
-        # External profiles
+        # Profiles
         #---------------------------------------------------------------
-
-        self.extprof_j  = np.empty(0,dtype=np.float64)
-        self.extprof_ne = np.empty(0,dtype=np.float64)
-        self.extprof_ni = np.empty(0,dtype=np.float64)
-        self.extprof_Te = np.empty(0,dtype=np.float64)
-        self.extprof_Ti = np.empty(0,dtype=np.float64)
-        self.extprof_q  = np.empty(0,dtype=np.float64)
-        self.bmaxprof   = np.empty(0,dtype=np.float64)
-        self.bavgprof   = np.empty(0,dtype=np.float64)
-
-        # PLACEHOLDER. TODO: Add impurity profiles
-        self.extprof_impfracs = np.empty(0,dtype=np.float64)
+        """
+        All profiles are defined as arrays of the same length as 
+        sqrtpsin, and **normalized**! 
+        """
+        self.j_prof  = np.empty(0,dtype=np.float64)             # Current density profile
+        self.ne_prof = np.empty(0,dtype=np.float64)             # Electron density profile
+        self.ni_prof = np.empty(0,dtype=np.float64)             # Ion density profile
+        self.Te_prof = np.empty(0,dtype=np.float64)             # Electron temperature profile
+        self.Ti_prof = np.empty(0,dtype=np.float64)             # Ion temperature profile
+        self.q_prof  = np.empty(0,dtype=np.float64)             # Safety factor profile
+        self.bmaxprof   = np.empty(0,dtype=np.float64)          # Maximum B field on flux surface (not implemented)
+        self.bavgprof   = np.empty(0,dtype=np.float64)          # Average B field on flux surface (not implemented)
+        self.extprof_impfracs = np.empty(0,dtype=np.float64)    # Impurity fractions profile (not implemented)
 
         #---------------------------------------------------------------
         # Scaling law parameters
         #---------------------------------------------------------------
 
-        self.H_fac: float = 1.0
-        self.scaling_const: float = 0.145
-        self.M_i_alpha: float = 0.19
-        self.Ip_alpha: float = 0.93
-        self.R_alpha: float = 1.39
-        self.a_alpha: float = 0.58
-        self.kappa_alpha: float = 0.78
-        self.B0_alpha: float = 0.15
-        self.Pheat_alpha: float = -0.69
-        self.n20_alpha: float = 0.41
+        self.H_fac: float = 1.0                                 # H (scaling law enhancement) factor
+        self.scaling_const: float = 0.145                       # Scaling law coefficient
+        self.M_i_alpha: float = 0.19                            # Ion mass scaling law exponent
+        self.Ip_alpha: float = 0.93                             # Plasma current scaling law exponent 
+        self.R_alpha: float = 1.39                              # Major radius scaling law exponent
+        self.a_alpha: float = 0.58                              # Minor radius scaling law exponent
+        self.kappa_alpha: float = 0.78                          # Elongation scaling law exponent
+        self.B0_alpha: float = 0.15                             # Toroidal field scaling law exponent
+        self.Pheat_alpha: float = -0.69                         # Power degradation scaling law exponent
+        self.n20_alpha: float = 0.41                            # Greenwald density scaling law exponent
 
         #---------------------------------------------------------------
         # Etc
         #---------------------------------------------------------------
-        self.verbosity: int = 0
+        self.verbosity: int = 0                                 # Verbosity level. 0 = silent, 1 = normal, 2 = debug, 3 = print all matrices
 
         pass
 
     #-------------------------------------------------------------------
     # Properties
-    # TODO: Impurity profiles
     #-------------------------------------------------------------------
 
-    # # BS from Martin H Mode Scaling (Martin et al J. Phys 2008) TODO: Cite
-    # # Update from kikuchi?
-    # @property
-    # def bs_factor(self):
-    #     return self.B0**(0.8)*(2.*np.pi*self.R * 2*np.pi*self.a * np.sqrt((self.kappa**2+1)/2))**(0.94)
-    
-    # n_GR, Greenwald density in 10^20/m^3
     @property
     def n_GR(self):
+        """
+        Greenwald density in 10^20/m^3
+        """
         return self.Ip/(np.pi*self.a**2)
     
     @property
     def V(self):
+        """
+        Plasma volume (in last closed flux surface) in m^3
+        """
         return self.volume_integral(self.sqrtpsin, np.ones_like(self.sqrtpsin))
     
     @property
     def A(self):
+        """
+        Plasma surface area (in last closed flux surface) in m^2
+        """
         return self.agrid[-1]
     #-------------------------------------------------------------------
     # Profiles and integration
     #-------------------------------------------------------------------
 
-    # Maybe do two of these classes for the two different profile types
-    # to skip this if-then-else?
-    def get_extprof(self, rho, profid:int):
+    def get_profile(self, rho:npt.NDArray[np.float_], profid:int) -> npt.NDArray[np.float_]:
         """
+        Returns the profile for a given profile ID at a given rho.
+        Allows for easy interpolation at runtime and avoids implementing
+        many profile functions.
+        -3: Area grid
         -2: Sqrt(psin) for geometry
         -1: Volume grid
         0: J profile
@@ -279,7 +307,7 @@ class POPCON_params:
             if not self.agriddefined:
                 raise ValueError("Area grid not defined.")
             return np.interp(rho, self.sqrtpsin, self.agrid)
-        if profid == -2:
+        elif profid == -2:
             if not self.rdefined:
                 raise ValueError("Geometry profiles not defined.")
             return np.interp(rho, self.sqrtpsin, self.sqrtpsin)
@@ -290,27 +318,27 @@ class POPCON_params:
         elif profid == 0:
             if not self._jdefined:
                 raise ValueError("J profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extprof_j)
+            return np.interp(rho, self.sqrtpsin, self.j_prof)
         elif profid == 1:
             if not self._nedefined:
                 raise ValueError("n_e profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extprof_ne)
+            return np.interp(rho, self.sqrtpsin, self.ne_prof)
         elif profid == 2:
             if not self._nidefined:
                 raise ValueError("n_i profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extprof_ni)
+            return np.interp(rho, self.sqrtpsin, self.ni_prof)
         elif profid == 3:
             if not self._Tidefined:
                 raise ValueError("Ti profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extprof_Ti)
+            return np.interp(rho, self.sqrtpsin, self.Ti_prof)
         elif profid == 4:
             if not self._Tedefined:
                 raise ValueError("Te profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extprof_Te)
+            return np.interp(rho, self.sqrtpsin, self.Te_prof)
         elif profid == 5:
             if not self._qdefined:
                 raise ValueError("q profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extprof_q)
+            return np.interp(rho, self.sqrtpsin, self.q_prof)
         elif profid == 6:
             if not self._bmaxdefined:
                 raise ValueError("bmax profile not defined.")
@@ -322,7 +350,12 @@ class POPCON_params:
         else:
             raise ValueError("Invalid profile ID.")
     
-    def volume_integral(self, rho, func):
+    def volume_integral(self, rho, func) -> float:
+        r"""
+        Integrates a function of rho dV-like:
+
+        $\int_0^1 func(\rho) \frac{dV}{d\rho} d\rho$
+        """
         # NOTE: profile must be an array of the same length as rho.
         # Integrates functions of rho dV-like
         V_interp = np.interp(rho, self.sqrtpsin, self.volgrid)
@@ -332,17 +365,23 @@ class POPCON_params:
     # Physical Quantities
     #-------------------------------------------------------------------
     
-    # Z_eff, effective ion charge
-    def Zeff(self, T_e_keV):
-        # Zeff = sum ( n_i * Z_i^2 ) / n_e
+    def Zeff(self, T_e_keV) -> float:
+        """
+        Effective ion charge.
+
+        Zeff = sum ( n_i * Z_i^2 ) / n_e
+        """
         # n_i = n20 * species fraction
         # n_e = n20 / dilution
         # n20 cancels
 
         # Hydrogen isotopes + impurities
-        return ( (1-np.sum(self.impurityfractions)) + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)**2))*self.get_plasma_dilution(T_e_keV)
+        return ( (1-np.sum(self.impurityfractions)) + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)**2))*self.plasma_dilution(T_e_keV)
     
-    def get_plasma_dilution(self, T_e_keV):
+    def plasma_dilution(self, T_e_keV) -> float:
+        """
+        Plasma dilution factor; number of ions per electron. Always <=1.
+        """
         dil = 1/(1 + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)))
         return dil
 
@@ -365,17 +404,19 @@ class POPCON_params:
     #     # Const = 4 sqrt(2pi)/3 * 1.602e-19^2 * 9.109e-31 / ( (4 pi * 8.854e-12)^2 * 1.602e-16^3/2 ) 
     #     # eta = const*Z_eff*ln(Lambda)*(T_e (keV))^(-3/2)
     #     return 
-
     
-    def get_eta_NC(self, rho, T_e_keV, n_e_20):
-        # Calculate the neoclassical resistivity in Ohm-m
-        # Equations 16-17 from [1] Jardin et al. 1993
-        # TODO: Enforce rho > 0 to avoid division by zero
+    def eta_NC(self, rho, T_e_keV:float, n_e_20:float) -> float:
+        """
+        Neoclassical resistivity in Ohm-m.
+
+        Equations 16-17 from [1] Jardin et al. 1993
+        """
+
         if np.any(rho <= 0):
             raise ValueError("Invalid rho value. Neoclassical resistivity not defined at rho=0.")
-        T_e_r = T_e_keV*self.get_extprof(rho, 4)
-        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 1)
-        q = self.get_extprof(rho, 5)
+        T_e_r = T_e_keV*self.get_profile(rho, 4)
+        n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
+        q = self.get_profile(rho, 5)
         Zeffprof = np.empty_like(T_e_r)
         for i in np.arange(T_e_r.shape[0]):
             Zeffprof[i] = self.Zeff(T_e_r[i])
@@ -400,24 +441,32 @@ class POPCON_params:
         eta_NC = eta_C / eta_C_eta_NC_ratio
         return eta_NC
     
-    def get_Vloop(self, T_e_keV, n_e_20):
-        # Calculate the loop voltage at ~plasma center
-        # V_loop = P_ohmic / Ip
+    def Vloop(self, T_e_keV, n_e_20) -> float:
+        """
+        Loop Voltage in Volts.
+
+        V_loop = P_ohmic / Ip
+        """
         P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
         return P_OH/self.Ip
         
     
-    def get_BetaN(self, T_i_keV, n_e_20):
-        # Calculate the normalized beta
-        # beta = 2*mu0*<P>/(B^2)
-        # <P> = int P dV / V (average pressure)
-        # beta_N = beta*a*B0/(Ip)
+    def BetaN(self, T_i_keV, n_e_20) -> float:
+        """
+        Normalized beta, beta*a*B0/Ip.
 
+        beta = 2 mu0 <P> / (B^2)
+        <P> = int P dV / V (average pressure)
+        beta_N = beta a B0 / (Ip)
+        """
         P_avg = 1e6*self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))/self.V
         beta =  2*(4e-7*np.pi)*P_avg/(self.B0**2)
         return beta*self.a*self.B0/self.Ip
     
-    def tauE_scalinglaw(self, Pheat, n_e_20):
+    def tauE_scalinglaw(self, Pheat, n_e_20) -> float:
+        """
+        User-chosen confinement time scaling law
+        """
         tauE = self.H_fac*self.scaling_const
         tauE *= self.M_i**self.M_i_alpha
         tauE *= self.Ip**self.Ip_alpha
@@ -429,8 +478,10 @@ class POPCON_params:
         tauE *= n_e_20**self.n20_alpha
         return tauE
     
-    def tauE_H98(self, Pheat, n_e_20):
-        # H98y2 scaling law
+    def tauE_H98(self, Pheat, n_e_20) -> float:
+        """
+        H98y2 scaling law for comparison
+        """
         tauE = 0.145
         #M_i**(0.19)*Ip**(0.93)*R**(1.39)*a**(0.58)*kappa**(0.78)*B0**(0.15)*Pheat**(-0.69)*n20**(0.41)
         tauE *= self.M_i**0.19
@@ -443,8 +494,10 @@ class POPCON_params:
         tauE *= n_e_20**0.41
         return tauE
     
-    def tauE_H89(self, Pheat, n_e_20):
-        # H89 scaling law
+    def tauE_H89(self, Pheat, n_e_20) -> float:
+        """
+        H89 scaling law for comparison
+        """
         #0.048*M_i**(0.5)*Ip**(0.85)*R**(1.2)*a**(0.3)*kappa**(0.5)*B0**(0.2)*Pheat**(-0.5)*n20**(0.1)
         tauE = 0.048
         tauE *= self.M_i**0.5
@@ -461,20 +514,20 @@ class POPCON_params:
     # Power profiles
     #-------------------------------------------------------------------
 
-    def _W_tot_prof(self, rho, T_i_keV, n_e_20):
+    def _W_tot_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_e_20:float):
         """
         Plasma energy per cubic meter; also pressure.
         """
-        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 2)
-        T_e_r = T_i_keV*self.get_extprof(rho, 4)/self.tipeak_over_tepeak
-        dil = self.get_plasma_dilution(T_i_keV/self.tipeak_over_tepeak)
-        n_i_r = 1e20*n_e_20*self.get_extprof(rho, 2)*dil
-        T_i_r = T_i_keV*self.get_extprof(rho, 3)
+        n_e_r = 1e20*n_e_20*self.get_profile(rho, 2)
+        T_e_r = T_i_keV*self.get_profile(rho, 4)/self.tipeak_over_tepeak
+        dil = self.plasma_dilution(T_i_keV/self.tipeak_over_tepeak)
+        n_i_r = 1e20*n_e_20*self.get_profile(rho, 2)*dil
+        T_i_r = T_i_keV*self.get_profile(rho, 3)
         # W_density = 3/2 * n_i * T_i
         # = 3/2 * (n_i_r) ( 1.60218e-22 * T_i_r (keV) ) (MJ/m^3)
         return 3/2 * 1.60218e-22 * (n_i_r * T_i_r + n_e_r * T_e_r)
     
-    def _P_DDpT_prof(self, rho, T_i_keV, n_i_20):
+    def _P_DDpT_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
         """
         D(d,p)T power per cubic meter
         """
@@ -485,8 +538,8 @@ class POPCON_params:
         else:
             raise ValueError("Invalid fuel cycle.")
         
-        n_i_r = 1e20*n_i_20*self.get_extprof(rho, 2)
-        T_i_r = T_i_keV*self.get_extprof(rho, 3)
+        n_i_r = 1e20*n_i_20*self.get_profile(rho, 2)
+        T_i_r = T_i_keV*self.get_profile(rho, 3)
 
         # reaction frequency f = n_D/sqrt(2) * n_D/sqrt(2) * <sigma v> (1/s)
         # 1.60218e-22 is the conversion factor from keV to MJ
@@ -496,7 +549,7 @@ class POPCON_params:
         f_ddpt = np.power( ( dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,2) * 1e-6
         return 1.60218e-22 * f_ddpt * (1.01e3 + 3.02e3)
     
-    def _P_DDnHe3_prof(self, rho, T_i_keV, n_i_20):
+    def _P_DDnHe3_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
         """
         D(d,n)He3 power per cubic meter
         """
@@ -507,8 +560,8 @@ class POPCON_params:
         else:
             raise ValueError("Invalid fuel cycle.")
         
-        n_i_r = 1e20*n_i_20*self.get_extprof(rho, 2)
-        T_i_r = T_i_keV*self.get_extprof(rho, 3)
+        n_i_r = 1e20*n_i_20*self.get_profile(rho, 2)
+        T_i_r = T_i_keV*self.get_profile(rho, 3)
 
         # See _P_DDpT_prof for explanation.
         # Note, for heating, only the He3 heats the plasma. For heating purposes,
@@ -517,9 +570,9 @@ class POPCON_params:
         f_ddnhe3 = np.power( (  dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,3) * 1e-6
         return 1.60218e-22 * f_ddnhe3 * (2.45e3 + 0.82e3)
     
-    def _P_DTnHe4_prof(self, rho, T_i_keV, n_i_20):
+    def _P_DTnHe4_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
         """
-        T(d,n)He4 power per cubic meter
+        T(d,n)He4 power density in MW/m^3
         """
         if self.fuel == 1:
             dfrac = 1-np.sum(self.impurityfractions)
@@ -530,8 +583,8 @@ class POPCON_params:
         else:
             raise ValueError("Invalid fuel cycle.")
         
-        n_i_r = 1e20*n_i_20*self.get_extprof(rho, 2)
-        T_i_r = T_i_keV*self.get_extprof(rho, 3)
+        n_i_r = 1e20*n_i_20*self.get_profile(rho, 2)
+        T_i_r = T_i_keV*self.get_profile(rho, 3)
 
         # See _P_DDpT_prof for explanation.
         # Note, for heating, only the He4 / alpha heats the plasma. For heating purposes,
@@ -540,51 +593,29 @@ class POPCON_params:
         f_dtnhe4 = dfrac*(n_i_r) * tfrac*(n_i_r) * phys.get_reactivity(T_i_r,1) * 1e-6
         return 1.60218e-22 * f_dtnhe4 * (3.52e3 + 14.06e3)
     
-    def _P_fusion_heating(self, rho, T_i_keV, n_i_20):
+    def _P_fusion_heating(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
         """
-        D-D and D-T heating power per cubic meter
+        D-D and D-T heating power density in MW/m^3
         """
         return  self._P_DDpT_prof(rho,T_i_keV,n_i_20) + \
               self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)*(0.82e3/(2.45e3+0.82e3))+\
               self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)*(3.52e3/(3.52e3+14.06e3))
     
-    def _P_fusion(self, rho, T_i_keV, n_i_20):
+    def _P_fusion(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
         """
-        Fusion power per cubic meter.
+        Fusion power density in MW/m^3
         """
         return self._P_DDpT_prof(rho, T_i_keV, n_i_20) + \
                 self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)+\
                 self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)
     
-    def Q_fusion(self, T_i_keV, n_e_20, Paux):
+    def _P_brem_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
         """
-        Physical fusion gain factor.
-        """
-        T_e_keV = T_i_keV/self.tipeak_over_tepeak
-        dil = self.get_plasma_dilution(T_e_keV)
-        n_i_20 = n_e_20*dil
-        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
-        P_ohmic_heating = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
-        return P_fusion/(Paux + P_ohmic_heating)
-    
-    def Q_eng(self, T_i_keV, n_e_20, Paux):
-        """
-        Engineering fusion gain factor; thermal heat out / thermal heat in.
-        """
-        T_e_keV = T_i_keV/self.tipeak_over_tepeak
-        dil = self.get_plasma_dilution(T_e_keV)
-        n_i_20 = n_e_20*dil
-        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
-        P_ohmic_heating = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
-        return (P_fusion + Paux + P_ohmic_heating)/(Paux + P_ohmic_heating)
-    
-    def _P_brem_rad(self, rho, T_e_keV, n_e_20):
-        """
-        Radiative power per cubic meter. See formulary.
+        Radiative power density in MW/m^3; See formulary.
         """
 
-        T_e_r = T_e_keV*self.get_extprof(rho, 4)
-        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 1)
+        T_e_r = T_e_keV*self.get_profile(rho, 4)
+        n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
 
         total_Zeff = np.empty(T_e_r.shape[0],dtype=np.float64)
         for i in np.arange(T_e_r.shape[0]):
@@ -595,12 +626,12 @@ class POPCON_params:
         P_brem = G*1e-6*np.sqrt(1000*T_e_r)*total_Zeff*(n_e_r/7.69e18)**2
         return P_brem
     
-    def _P_impurity_rad(self, rho, T_e_keV, n_e_20):
+    def _P_impurity_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
         """
-        Radiative power per cubic meter from impurities. Zohm 2019.
+        Radiative power density from impurities in MW/m^3; see Zohm 2019.
         """
-        T_e_r = T_e_keV*self.get_extprof(rho, 4)
-        n_e_r = 1e20*n_e_20*self.get_extprof(rho, 1)
+        T_e_r = T_e_keV*self.get_profile(rho, 4)
+        n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
         Lz = np.empty((T_e_r.shape[0],6),dtype=np.float64)
         for i in np.arange(T_e_r.shape[0]):
             Lz[i,:] = phys.get_rads(T_e_r[i])
@@ -608,21 +639,31 @@ class POPCON_params:
         P_line = np.sum(1e-6*(Lz.T*(n_e_r)**2).T*self.impurityfractions,axis=1)
         return P_line
     
-    def _P_rad(self, rho, T_e_keV, n_e_20):
+    def _P_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
         """
-        Total radiative power per cubic meter.
+        Total radiative power density in MW/m^3.
         """
         return self._P_brem_rad(rho, T_e_keV, n_e_20) + self._P_impurity_rad(rho, T_e_keV, n_e_20)
     
-    def _P_OH_prof(self, rho, T_e_keV, n_e_20):
+    def _P_OH_prof(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float) -> npt.NDArray[np.float_]:
         """
-        Ohmic power per cubic meter
+        Ohmic power density in MW/m^3
         """
 
-        eta_NC = self.get_eta_NC(rho, T_e_keV, n_e_20)
-        J = self.Ip*1e6*self.get_extprof(rho, 0)
+        eta_NC = self.eta_NC(rho, T_e_keV, n_e_20)
+        J = self.Ip*1e6*self.get_profile(rho, 0)
         return 1e-6*eta_NC*J**2
 
+    def Q_fusion(self, T_i_keV:float, n_e_20:float, Paux:float) -> float:
+        """
+        Physical fusion gain factor.
+        """
+        T_e_keV = T_i_keV/self.tipeak_over_tepeak
+        dil = self.plasma_dilution(T_e_keV)
+        n_i_20 = n_e_20*dil
+        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
+        return P_fusion/(Paux)
+    
     #-------------------------------------------------------------------
     # Power Balance Relaxation Solvers
     #-------------------------------------------------------------------
@@ -631,13 +672,12 @@ class POPCON_params:
         """
         Relaxation solver for holding impfrac constant.
         """
-        # print(f"Solving T_i =",Ti, "keV, n20 =",n20,"e20 m^-3")
         
         P_aux_iter = 100. # Don't want to undershoot as we can end up with P~0 and this can create a NaN! So we choose a high starting point.
         T_e_keV = T_i_keV/self.tipeak_over_tepeak
-        dil = self.get_plasma_dilution(T_e_keV)
+        dil = self.plasma_dilution(T_e_keV)
         n_i_20 = n_e_20*dil
-        line_average_fac = np.average(self.get_extprof(self.sqrtpsin, 1))
+        line_average_fac = np.average(self.get_profile(self.sqrtpsin, 1))
         dPaux: float
         P_fusion_heating_iter = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, T_i_keV, n_i_20))
         P_ohmic_heating_iter = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
@@ -648,38 +688,27 @@ class POPCON_params:
         for ii in np.arange(max_iters):
             # Power in
             P_totalheating_iter = P_aux_iter + P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter
-            # print()
-            # print("P_fusion = ", P_fusion_heating_iter)
-            # print("P_ohmic = ", P_ohmic_heating_iter)
-            # print("P_aux =", P_aux_iter)
-            # print()
+
             # Power out
             tauE_iter = self.tauE_scalinglaw(P_totalheating_iter, n_e_20*line_average_fac)
             P_confinement_loss_iter = W_tot_iter/tauE_iter
-            P_totalloss_iter = P_confinement_loss_iter
-            # print("W_tot =", W_tot_iter)
-            # print("tauE =", tauE_iter)
-            # print("P_rad =", P_rad_iter)
-            # print("P_confinement =", P_confinement_loss_iter)
-            # print('-------------------------------------------------')
+
             # Power balance
-            dPaux = P_totalloss_iter - P_totalheating_iter
+            dPaux = P_confinement_loss_iter - P_totalheating_iter
 
             # Relaxation
+
+            # Prevent negative aux power
             if -dPaux*accel > P_aux_iter:
-                # Prevent negative aux power
                 P_aux_iter -= 0.9*P_aux_iter
             else:
                 P_aux_iter += accel*dPaux
+
+            # Prevent negative total heating power
             if P_aux_iter < -(P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter):
-                # Prevent negative total heating power
                 P_aux_iter = P_brem_iter
 
-            # print("\n\n------------------------------------")
-            # print("P_heat =", P_totalheating_iter)
-            # print("P_heat_tot =", P_totalheating_iter)
-            # print("P_loss =", P_totalloss_iter)
-
+            # Check for convergence
             if P_aux_iter < 1.0:
                 if np.abs(dPaux/1.0) < err:
                     break
@@ -687,14 +716,13 @@ class POPCON_params:
                 if np.abs(dPaux/P_aux_iter) < err:
                     break
             
-            # if P_aux_iter < 0:
-            #     if P_aux_iter_last > P_aux_iter:
-            #         raise Warning(f"Power balance relaxation solver diverged in iteration {ii}. Try reducing the relaxation factor.")
-            
             if ii == max_iters-1:
                 if self.verbosity > 0:
                     print(f"Power balance relaxation solver did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.")
         
+        # Warn for P_SOL < 0: This is when the impurity radiation power exceeds the total W_tot/tauE.
+        # Impurity power is assumed to displace what would otherwise be conductive, turbulent, or instability-driven losses.
+        # This means that it radiates power away that would otherwise cross the separatrix and strike the divertor.
         if P_imp_iter > P_confinement_loss_iter:
             if self.verbosity > 0:
                 print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
@@ -706,6 +734,9 @@ class POPCON_params:
     #-------------------------------------------------------------------
 
     def _addextprof(self, extprofvals, profid):
+        """
+        Adds an input profile to the class.
+        """
         if profid == -3:
             if self.agriddefined:
                 raise ValueError("Area grid already defined.")
@@ -725,37 +756,32 @@ class POPCON_params:
         elif profid == 0:
             if self._jdefined:
                 raise ValueError("J profile already defined.")
-            self.extprof_j = extprofvals
+            self.j_prof = extprofvals
             self._jdefined = True
-            self._jextprof = True
         elif profid == 1:
             if self._nedefined:
                 raise ValueError("n_e profile already defined.")
-            self.extprof_ne = extprofvals
+            self.ne_prof = extprofvals
             self._nedefined = True
-            self._neextprof = True
         elif profid == 2:
             if self._nidefined:
                 raise ValueError("n_i profile already defined.")
-            self.extprof_ni = extprofvals
+            self.ni_prof = extprofvals
             self._nidefined = True
-            self._niextprof = True
         elif profid == 3:
             if self._Tidefined:
                 raise ValueError("Ti profile already defined.")
-            self.extprof_Ti = extprofvals
+            self.Ti_prof = extprofvals
             self._Tidefined = True
-            self._Tiextprof = True
         elif profid == 4:
             if self._Tedefined:
                 raise ValueError("Te profile already defined.")
-            self.extprof_Te = extprofvals
+            self.Te_prof = extprofvals
             self._Tedefined = True
-            self._Teextprof = True
         elif profid == 5:
             if self._qdefined:
                 raise ValueError("q profile already defined.")
-            self.extprof_q = extprofvals
+            self.q_prof = extprofvals
             self._qdefined = True
         elif profid == 6:
             if self._bmaxdefined:
@@ -771,6 +797,10 @@ class POPCON_params:
             raise ValueError("Invalid profile ID.")
         
     def _set_alpha_and_offset(self, alpha1, alpha2, offset, profid:int):
+        """
+        If the profile is not externally defined, this function sets the
+        parabolic profile parameters.
+        """
         if profid == 0:
             if self._jdefined:
                 raise ValueError("J profile already defined.")
@@ -808,7 +838,11 @@ class POPCON_params:
     #     # TODO: implement this
     #     pass
 
-    def _setup_profs(self):
+    def _setup_profs(self) -> None:
+        """
+        Sets up profiles for the first time. If external profiles have
+        not been added, it will use parabolic profiles.
+        """
         rho = self.sqrtpsin
         if not self.rdefined:
             raise ValueError("Geometry profile not defined.")
@@ -824,28 +858,23 @@ class POPCON_params:
             self.volgrid = 2*np.pi*self.R*(1-0.25*self.delta*epsilon)*S_phi # Sauter eqs 36
             self.volgriddefined = True
         if not self._jdefined:
-            self.extprof_j = (1-self.j_offset)*(1-rho**self.j_alpha1)**self.j_alpha2 + self.j_offset
+            self.j_prof = (1-self.j_offset)*(1-rho**self.j_alpha1)**self.j_alpha2 + self.j_offset
             self._jdefined = True
-            self._jextprof = False
         if not self._nedefined:
-            self.extprof_ne = (1-self.ne_offset)*(1-rho**self.ne_alpha1)**self.ne_alpha2 + self.ne_offset
+            self.ne_prof = (1-self.ne_offset)*(1-rho**self.ne_alpha1)**self.ne_alpha2 + self.ne_offset
             self._nedefined = True
-            self._neextprof = False
         if not self._nidefined:
-            self.extprof_ni = (1-self.ni_offset)*(1-rho**self.ni_alpha1)**self.ni_alpha2 + self.ni_offset
+            self.ni_prof = (1-self.ni_offset)*(1-rho**self.ni_alpha1)**self.ni_alpha2 + self.ni_offset
             self._nidefined = True
-            self._niextprof = False
         if not self._Tidefined:
-            self.extprof_Ti = (1-self.Ti_offset)*(1-rho**self.Ti_alpha1)**self.Ti_alpha2 + self.Ti_offset
+            self.Ti_prof = (1-self.Ti_offset)*(1-rho**self.Ti_alpha1)**self.Ti_alpha2 + self.Ti_offset
             self._Tidefined = True
-            self._Tiextprof = False
         if not self._Tedefined:
-            self.extprof_Te = (1-self.Te_offset)*(1-rho**self.Te_alpha1)**self.Te_alpha2 + self.Te_offset
+            self.Te_prof = (1-self.Te_offset)*(1-rho**self.Te_alpha1)**self.Te_alpha2 + self.Te_offset
             self._Tedefined = True
-            self._Teextprof = False
         if not self._qdefined:
             # self.q_a = 2*np.pi*self.a**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
-            self.extprof_q = 2*np.pi*(self.a*rho)**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
+            self.q_prof = 2*np.pi*(self.a*rho)**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self._qdefined = True
         if not self._bmaxdefined:
             self.bmaxprof = np.sqrt((self.B0*self.R/(self.R-rho*self.a))**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
@@ -857,8 +886,13 @@ class POPCON_params:
 
 # NOT jit compiled
 class POPCON_settings:
-    # 
+    """
+    Class POPCON_settings
 
+    This class reads a YAML file and stores the settings for a POPCON run.
+    Uses safe_get where appropriate to allow for missing keys in an outdated
+    settings file. When applicable, sets to the default value.
+    """
     def __init__(self,
                  filename: str,
                  ) -> None:
@@ -866,6 +900,9 @@ class POPCON_settings:
         pass
 
     def read(self, filename: str) -> None:
+        """
+        Reads a YAML file and sets the settings.
+        """
         if filename.endswith('.yaml') or filename.endswith('.yml'):
             with open(filename, 'r') as f:
                 data = yaml.safe_load(f)
@@ -1004,7 +1041,9 @@ POPCON_data_spec = [
 @nb.experimental.jitclass(spec = POPCON_data_spec) # type: ignore
 class POPCON_data:
     """
-    Output data class for the POPCON.
+    Class POPCON_data
+
+    Output data class for the POPCON. Contains all output arrays.
     """
     def __init__(self) -> None:
         self.n_G_frac: np.ndarray
@@ -1040,21 +1079,15 @@ class POPCON_data:
         self.betaN: np.ndarray
         pass
 
-class POPCON_scan:
-    """
-    Placeholder for new structure
-    """
-    def __init__(self) -> None:
-        self.datas: list[POPCON_data]
-        self.params: list[POPCON_params]
-        self.settings: POPCON_settings
-        self.plotsettings: list[POPCON_plotsettings]
-        self.scalinglaws: dict
-        self.scanvariables: dict[str, np.ndarray]
-        pass
-
 # NOT jit compiled
 class POPCON_plotsettings:
+    """
+    Class POPCON_plotsettings
+
+    This class reads a YAML file and stores the settings for a POPCON plot.
+    Uses safe_get where appropriate to allow for missing keys in an outdated
+    settings file. When applicable, sets to the default value.
+    """
     def __init__(self,
                  filename: str,
                  ) -> None:
@@ -1069,6 +1102,9 @@ class POPCON_plotsettings:
         pass
 
     def read(self, filename: str) -> None:
+        """
+        Reads a YAML file and sets the settings.
+        """
         if filename.endswith('.yaml') or filename.endswith('.yml'):
             data = yaml.safe_load(open(filename, 'r'))
         else:
@@ -1092,12 +1128,14 @@ class POPCON:
     """
     The Primary class for the OpenPOPCON project.
 
-    TODO: Write Documentation
+    This class is the primary interface for the OpenPOPCON project. It
+    contains the settings, parameters, and output data for a POPCON run.
+
+
     """
 
     def __init__(self, settingsfile = None, plotsettingsfile = None, scalinglawfile = None) -> None:
-
-        self.params: POPCON_params
+        self.algorithms: POPCON_algorithms
         self.settings: POPCON_settings
         self.plotsettings: POPCON_plotsettings
         self.output: POPCON_data
@@ -1121,7 +1159,7 @@ class POPCON:
         self.scalinglawfile = scalinglawfile
         
         self.__check_settings()
-        compile_test = POPCON_params()
+        compile_test = POPCON_algorithms()
         try:
             compile_test.P_aux_relax_impfrac(1,1,1,1,1)
         except:
@@ -1133,49 +1171,44 @@ class POPCON:
     # Solving
     #-------------------------------------------------------------------
 
-    def single_popcon(self, plot: bool = True, show: bool = True) -> None:
+    def run_POPCON(self) -> None:
+        """
+        Wrapper function that sets up and solves the power balance 
+        equations at each point in the grid.
+        """
         self.__setup_params()
-        if self.settings.gfilename == '':
-            rho = np.linspace(0.001,1,self.settings.nr)
-            self.params._addextprof(rho,-2)
-            self.params._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
-            
-        else:
-            self.__get_geometry()
-        if self.settings.profsfilename == '':
-            self.params._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
-            self.params._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
-            self.params._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
-            self.params._set_alpha_and_offset(self.settings.Te_alpha1, self.settings.Te_alpha2, self.settings.Te_offset, 4)
-        else:
-            self.__get_profiles()
+        self.__get_geometry()
+        self.__get_profiles()
 
-        self.params._setup_profs()
+        self.algorithms._setup_profs()
         scalinglaw = self.settings.scalinglaw
         slparam = self.scalinglaws[scalinglaw]
-        self.params.H_fac = self.settings.H_fac
-        self.params.scaling_const = slparam['scaling_const']
-        self.params.M_i_alpha = slparam['M_i_alpha']
-        self.params.Ip_alpha = slparam['Ip_alpha']
-        self.params.R_alpha = slparam['R_alpha']
-        self.params.a_alpha = slparam['a_alpha']
-        self.params.kappa_alpha = slparam['kappa_alpha']
-        self.params.B0_alpha = slparam['B0_alpha']
-        self.params.Pheat_alpha = slparam['Pheat_alpha']
-        self.params.n20_alpha = slparam['n20_alpha']
-        
-        self.solve_popcons()
+        self.algorithms.H_fac = self.settings.H_fac
+        self.algorithms.scaling_const = slparam['scaling_const']
+        self.algorithms.M_i_alpha = slparam['M_i_alpha']
+        self.algorithms.Ip_alpha = slparam['Ip_alpha']
+        self.algorithms.R_alpha = slparam['R_alpha']
+        self.algorithms.a_alpha = slparam['a_alpha']
+        self.algorithms.kappa_alpha = slparam['kappa_alpha']
+        self.algorithms.B0_alpha = slparam['B0_alpha']
+        self.algorithms.Pheat_alpha = slparam['Pheat_alpha']
+        self.algorithms.n20_alpha = slparam['n20_alpha']
+        self.solve()
 
-        if plot:
-            self.plot()
 
-    def solve_popcons(self) -> None:
-
+    def solve(self) -> None:
+        """
+        Does the legwork for run_POPCON.
+        """
         @nb.njit(parallel=self.settings.parallel)
-        def solve_nT(params:POPCON_params, nn:int, nT:int,
+        def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
                         n_e_20:np.ndarray, T_i_keV:np.ndarray, 
                         accel:float=1.2, err:float=1e-5,
                         maxit:int=1000):
+            """
+            Compiling the solver allows for parallelization, as each
+            point in the grid can be solved independently.
+            """
 
             Paux = np.empty((nn,nT),dtype=np.float64)
             
@@ -1191,14 +1224,19 @@ class POPCON:
             return Paux
         
         @nb.njit(parallel=self.settings.parallel)
-        def populate_outputs(params:POPCON_params, result:POPCON_data, Nn, NTi):
+        def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi):
+            """
+            Compiling this function is handy as it allows for 
+            parallelization of the most computationally expensive
+            part of the code.
+            """
             rho = params.sqrtpsin
-            line_average_fac = np.average(params.get_extprof(rho, 1))
+            line_average_fac = np.average(params.get_profile(rho, 1))
             for i in nb.prange(Nn):
                 for j in nb.prange(NTi):
-                    dil = params.get_plasma_dilution(result.T_e_max[j])
+                    dil = params.plasma_dilution(result.T_e_max[j])
                     result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
-                    result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_extprof(rho, 2))/params.V
+                    result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
                     result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
                     result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
                     result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
@@ -1219,16 +1257,16 @@ class POPCON:
                     result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
                     result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
                     result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-                    result.vloop[i,j] = params.get_Vloop(result.T_e_max[j], result.n_e_20_max[i])
-                    result.betaN[i,j] = 100*params.get_BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
+                    result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
+                    result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
             return result
                 
-        params = self.params
+        params = self.algorithms
         rho = params.sqrtpsin
         n_G = params.n_GR
-        n_e_avg_fac= params.volume_integral(rho, params.get_extprof(rho,1))/params.V
-        T_i_avg_fac = params.volume_integral(rho, params.get_extprof(rho,3))/params.V
-        T_e_avg_fac = params.volume_integral(rho, params.get_extprof(rho,4))/params.V
+        n_e_avg_fac= params.volume_integral(rho, params.get_profile(rho,1))/params.V
+        T_i_avg_fac = params.volume_integral(rho, params.get_profile(rho,3))/params.V
+        T_e_avg_fac = params.volume_integral(rho, params.get_profile(rho,4))/params.V
         n_e_20 = np.linspace(self.settings.nmin_frac*n_G/n_e_avg_fac, self.settings.nmax_frac*n_G/n_e_avg_fac, self.settings.Nn)
         T_i_keV = np.linspace(self.settings.Tmin_keV/T_i_avg_fac, self.settings.Tmax_keV/T_i_avg_fac, self.settings.NTi)
         T_e_keV = T_i_keV/self.settings.tipeak_over_tepeak
@@ -1271,47 +1309,51 @@ class POPCON:
         self.output.vloop = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.betaN = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
 
-        result = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi)
+        self.output = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi)
 
         pass
 
-    def single_point(self, i_params:int, n_G_frac:float, Ti_av:float, plot:bool=True, show:bool=True) -> None:
+    def single_point(self, n_G_frac:float, Ti_av:float, plot:bool=True, show:bool=True) -> None:
+        """
+        Solves power balance at a single n, T point. Prints the results
+        plots the profiles of the solution if plot=True.
+        """
         
-        n_G = self.params.n_GR
-        rho = self.params.sqrtpsin
-        n_e_avg_fac = self.params.volume_integral(rho, self.params.get_extprof(rho, 1))/self.params.V
+        n_G = self.algorithms.n_GR
+        rho = self.algorithms.sqrtpsin
+        n_e_avg_fac = self.algorithms.volume_integral(rho, self.algorithms.get_profile(rho, 1))/self.algorithms.V
         n_e_20 = n_G_frac*n_G/n_e_avg_fac
-        T_i_avg_fac = self.params.volume_integral(rho, self.params.get_extprof(rho, 3))/self.params.V
-        n_i_avg_fac = self.params.volume_integral(rho, self.params.get_extprof(rho, 2))/self.params.V
+        T_i_avg_fac = self.algorithms.volume_integral(rho, self.algorithms.get_profile(rho, 3))/self.algorithms.V
+        n_i_avg_fac = self.algorithms.volume_integral(rho, self.algorithms.get_profile(rho, 2))/self.algorithms.V
         T_i_keV = Ti_av/T_i_avg_fac
-        T_e_keV = T_i_keV/self.params.tipeak_over_tepeak
-        dil = self.params.get_plasma_dilution(T_e_keV)
+        T_e_keV = T_i_keV/self.algorithms.tipeak_over_tepeak
+        dil = self.algorithms.plasma_dilution(T_e_keV)
         n_i_20 = n_e_20*dil
-        line_avg_fac = np.average(self.params.get_extprof(rho, 1))
+        line_avg_fac = np.average(self.algorithms.get_profile(rho, 1))
 
-        Paux = self.params.P_aux_relax_impfrac(n_e_20,T_i_keV,self.settings.accel,self.settings.err,self.settings.maxit)
+        Paux = self.algorithms.P_aux_relax_impfrac(n_e_20,T_i_keV,self.settings.accel,self.settings.err,self.settings.maxit)
         
-        Pfusion = self.params.volume_integral(rho,self.params._P_fusion(rho, T_i_keV, n_i_20))
-        Pfusion_heating = self.params.volume_integral(rho,self.params._P_fusion_heating(rho, T_i_keV, n_i_20))
-        Pohmic = self.params.volume_integral(rho,self.params._P_OH_prof(rho, T_e_keV, n_e_20))
-        Pbrems = self.params.volume_integral(rho,self.params._P_brem_rad(rho, T_e_keV, n_e_20))
-        Pimprad = self.params.volume_integral(rho,self.params._P_impurity_rad(rho, T_e_keV, n_e_20))
-        Prad = self.params.volume_integral(rho,self.params._P_rad(rho, T_e_keV, n_e_20))
+        Pfusion = self.algorithms.volume_integral(rho,self.algorithms._P_fusion(rho, T_i_keV, n_i_20))
+        Pfusion_heating = self.algorithms.volume_integral(rho,self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20))
+        Pohmic = self.algorithms.volume_integral(rho,self.algorithms._P_OH_prof(rho, T_e_keV, n_e_20))
+        Pbrems = self.algorithms.volume_integral(rho,self.algorithms._P_brem_rad(rho, T_e_keV, n_e_20))
+        Pimprad = self.algorithms.volume_integral(rho,self.algorithms._P_impurity_rad(rho, T_e_keV, n_e_20))
+        Prad = self.algorithms.volume_integral(rho,self.algorithms._P_rad(rho, T_e_keV, n_e_20))
         Pheat = Pfusion_heating + Pohmic + Paux - Pbrems
-        Palpha = self.params.volume_integral(rho,self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
-        Pdd = self.params.volume_integral(rho,self.params._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
-        Pdd += self.params.volume_integral(rho,self.params._P_DDpT_prof(rho, T_i_keV, n_i_20))
-        Pdt = self.params.volume_integral(rho,self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20))
-        tauE = self.params.tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
-        Wtot = self.params.volume_integral(rho,self.params._W_tot_prof(rho,T_i_keV,n_e_20))
+        Palpha = self.algorithms.volume_integral(rho,self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
+        Pdd = self.algorithms.volume_integral(rho,self.algorithms._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
+        Pdd += self.algorithms.volume_integral(rho,self.algorithms._P_DDpT_prof(rho, T_i_keV, n_i_20))
+        Pdt = self.algorithms.volume_integral(rho,self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20))
+        tauE = self.algorithms.tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
+        Wtot = self.algorithms.volume_integral(rho,self.algorithms._W_tot_prof(rho,T_i_keV,n_e_20))
         Pconf = Wtot/tauE
         Ploss = Pconf
         f_rad = Prad/Ploss
-        Q = self.params.Q_fusion(T_i_keV, n_e_20, Paux)
-        H89 = tauE/self.params.tauE_H89(Pheat,n_e_20*line_avg_fac)
-        H98 = tauE/self.params.tauE_H98(Pheat,n_e_20*line_avg_fac)
-        vloop = self.params.get_Vloop(T_e_keV, n_e_20)
-        betaN = 100*self.params.get_BetaN(T_i_keV, n_e_20) # in percent
+        Q = self.algorithms.Q_fusion(T_i_keV, n_e_20, Paux)
+        H89 = tauE/self.algorithms.tauE_H89(Pheat,n_e_20*line_avg_fac)
+        H98 = tauE/self.algorithms.tauE_H98(Pheat,n_e_20*line_avg_fac)
+        vloop = self.algorithms.Vloop(T_e_keV, n_e_20)
+        betaN = 100*self.algorithms.BetaN(T_i_keV, n_e_20) # in percent
         pstring = \
 f"""
 Params:
@@ -1326,7 +1368,7 @@ Solution:
 P_aux = {Paux:.2f} MW
 P_fusion = {Pfusion:.2f} MW
 P_SOL = {Ploss - Prad:.2f} MW
-P_load = {(Ploss-Prad)/self.params.A:.3f} MW/m^2
+P_load = {(Ploss-Prad)/self.algorithms.A:.3f} MW/m^2
 P_ohmic = {Pohmic:.3f} MW
 P_brems = {Pbrems:.3f} MW
 P_imprad = {Pimprad:.3f} MW
@@ -1347,18 +1389,18 @@ betaN = {betaN:.3f}
         print(pstring)
 
         if plot:
-            Pfusion_prof = self.params._P_fusion(rho, T_i_keV, n_i_20)
-            Pfusion_heating_prof = self.params._P_fusion_heating(rho, T_i_keV, n_i_20)
-            Pohmic_prof = self.params._P_OH_prof(rho, T_e_keV, n_e_20)
-            Prad_prof = self.params._P_rad(rho, T_e_keV, n_e_20)
-            Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.params.V
-            Palpha_prof = self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20)*3.52e3/(3.52e3 + 14.06e3)
-            Pdt_prof = self.params._P_DTnHe4_prof(rho, T_i_keV, n_i_20)
-            niprof = n_i_20*self.params.get_extprof(rho, 2)
-            neprof = n_e_20*self.params.get_extprof(rho, 1)
-            Tiprof = T_i_keV*self.params.get_extprof(rho, 3)
-            Teprof = T_e_keV*self.params.get_extprof(rho, 4)
-            qprof = self.params.get_extprof(rho, 5)
+            Pfusion_prof = self.algorithms._P_fusion(rho, T_i_keV, n_i_20)
+            Pfusion_heating_prof = self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20)
+            Pohmic_prof = self.algorithms._P_OH_prof(rho, T_e_keV, n_e_20)
+            Prad_prof = self.algorithms._P_rad(rho, T_e_keV, n_e_20)
+            Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.algorithms.V
+            Palpha_prof = self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20)*3.52e3/(3.52e3 + 14.06e3)
+            Pdt_prof = self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20)
+            niprof = n_i_20*self.algorithms.get_profile(rho, 2)
+            neprof = n_e_20*self.algorithms.get_profile(rho, 1)
+            Tiprof = T_i_keV*self.algorithms.get_profile(rho, 3)
+            Teprof = T_e_keV*self.algorithms.get_profile(rho, 4)
+            qprof = self.algorithms.get_profile(rho, 5)
 
             # Density and temperatures
             # 
@@ -1378,8 +1420,8 @@ betaN = {betaN:.3f}
             
             # Power profiles
             fig, ax = plt.subplots(figsize=(8,6))
-            # V_enclosed = self.params.get_extprof(rho, -1)
-            radius = rho*self.params.a
+            # V_enclosed = self.algorithms.get_profile(rho, -1)
+            radius = rho*self.algorithms.a
             ax.plot(radius, Pfusion_prof, 'k-', label=r'$P_{\text{fusion}}$')
             ax.plot(radius, Pohmic_prof, 'r-', label=r'$P_{\text{ohmic}}$')
             ax.plot(radius, Prad_prof, '-',color='purple', label=r'$P_{\text{rad}}$')
@@ -1398,6 +1440,11 @@ betaN = {betaN:.3f}
     #-------------------------------------------------------------------
 
     def plot(self, show:bool=True, savefig:str='', names=None):
+        """
+        Plots the output data. If variable names is specified, only
+        plots those variables. Otherwise, refers to the plotsettings
+        file.
+        """
         figsize = self.plotsettings.figsize
         fig, ax = plt.subplots(figsize=figsize)
         if self.plotsettings.xax == 'T_i_av':
@@ -1473,7 +1520,7 @@ betaN = {betaN:.3f}
             ax.set_ylabel(r'$\langle n\rangle /n_G$')
         else:
             pass
-        p = self.params
+        p = self.algorithms
 
         # 1 = D-D, 2 = D-T, 3 = D-He3
         fueldict = {1:'D-D', 2:'D-T', 3:'D-He3'}
@@ -1528,6 +1575,11 @@ betaN = {betaN:.3f}
     #-------------------------------------------------------------------
 
     def write_output(self, name:str='', archive:bool=True, overwrite:bool=False) -> None:
+        """
+        Saves the output results to a directory. If archive is True,
+        archives the directory as a zip file. If overwrite is True,
+        overwrites the directory/zip if it already exists.
+        """
         if name == '':
             name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
 
@@ -1574,6 +1626,9 @@ betaN = {betaN:.3f}
             shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
 
     def read_output(self, name: str) -> None:
+        """
+        Restores the POPCON object based on the output directory.
+        """
         outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
         if name.endswith('.zip'):
             outputsdir.joinpath(name[:-4]).mkdir()
@@ -1614,75 +1669,90 @@ betaN = {betaN:.3f}
         self.scalinglaws = data
 
     def __setup_params(self) -> None:
-        self.params = POPCON_params()
-        self.params.R = self.settings.R
-        self.params.a = self.settings.a
-        self.params.kappa = self.settings.kappa
-        self.params.delta = self.settings.delta
-        self.params.B0 = self.settings.B0
-        self.params.Ip = self.settings.Ip
-        self.params.M_i = self.settings.M_i
-        self.params.tipeak_over_tepeak = self.settings.tipeak_over_tepeak
-        self.params.fuel = self.settings.fuel
-        self.params.impurityfractions = self.settings.impurityfractions
-        self.params.verbosity = self.settings.verbosity
+        self.algorithms = POPCON_algorithms()
+        self.algorithms.R = self.settings.R
+        self.algorithms.a = self.settings.a
+        self.algorithms.kappa = self.settings.kappa
+        self.algorithms.delta = self.settings.delta
+        self.algorithms.B0 = self.settings.B0
+        self.algorithms.Ip = self.settings.Ip
+        self.algorithms.M_i = self.settings.M_i
+        self.algorithms.tipeak_over_tepeak = self.settings.tipeak_over_tepeak
+        self.algorithms.fuel = self.settings.fuel
+        self.algorithms.impurityfractions = self.settings.impurityfractions
+        self.algorithms.verbosity = self.settings.verbosity
 
     def __get_profiles(self) -> None:
-        profstable = read_profsfile(self.settings.profsfilename)
-        ne = np.asarray(profstable['n_e'])
-        ne = ne/ne[0]
-        ni = np.asarray(profstable['n_i'])
-        ni = ni/ni[0]
-        Ti = np.asarray(profstable['T_i'])
-        Ti = Ti/Ti[0]
-        Te = np.asarray(profstable['T_e'])
-        Te = Te/Te[0]
-        rho = np.asarray(profstable['rho'])
-        ne_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ne)
-        ni_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ni)
-        Ti_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,Ti)
-        Te_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,Te)
-        self.params._addextprof(ne_sqrtpsin,1)
-        self.params._addextprof(ni_sqrtpsin,2)
-        self.params._addextprof(Ti_sqrtpsin,3)
-        self.params._addextprof(Te_sqrtpsin,4)
+        if self.settings.profsfilename == '':
+            self.algorithms._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
+            self.algorithms._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
+            self.algorithms._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
+            self.algorithms._set_alpha_and_offset(self.settings.Te_alpha1, self.settings.Te_alpha2, self.settings.Te_offset, 4)
+        else:
+            profstable = read_profsfile(self.settings.profsfilename)
+            ne = np.asarray(profstable['n_e'])
+            ne = ne/ne[0]
+            ni = np.asarray(profstable['n_i'])
+            ni = ni/ni[0]
+            Ti = np.asarray(profstable['T_i'])
+            Ti = Ti/Ti[0]
+            Te = np.asarray(profstable['T_e'])
+            Te = Te/Te[0]
+            rho = np.asarray(profstable['rho'])
+            ne_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ne)
+            ni_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,ni)
+            Ti_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,Ti)
+            Te_sqrtpsin = np.interp(np.linspace(0.001,1,self.settings.nr),rho,Te)
+            self.algorithms._addextprof(ne_sqrtpsin,1)
+            self.algorithms._addextprof(ni_sqrtpsin,2)
+            self.algorithms._addextprof(Ti_sqrtpsin,3)
+            self.algorithms._addextprof(Te_sqrtpsin,4)
 
         pass
 
     def __get_geometry(self) -> None:
-        gfile = read_eqdsk(self.settings.gfilename)
-        psin, volgrid, agrid, _ = get_fluxvolumes(gfile)
-        sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
-        volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
+        if self.settings.gfilename == '':
+            rho = np.linspace(0.001,1,self.settings.nr)
+            self.algorithms._addextprof(rho,-2)
+            self.algorithms._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
+            
+        else:
+            gfile = read_eqdsk(self.settings.gfilename)
+            psin, volgrid, agrid, _ = get_fluxvolumes(gfile)
+            sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
+            volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
 
-        ffp = np.asarray(gfile['ffprim'])
-        psi = np.linspace(0,1,ffp.shape[0])
-        f2 = np.cumsum(ffp)*np.diff(psi)[0] + gfile['fpol'][0]**2
-        f = np.sqrt(f2)
-        fp = np.gradient(f,psi)
+            ffp = np.asarray(gfile['ffprim'])
+            psi = np.linspace(0,1,ffp.shape[0])
+            f2 = np.cumsum(ffp)*np.diff(psi)[0] + gfile['fpol'][0]**2
+            f = np.sqrt(f2)
+            fp = np.gradient(f,psi)
 
-        pp = np.asarray(gfile['pprime'])
-        qpsi = np.asarray(gfile['qpsi'])
-        psiq = np.linspace(0,1,qpsi.shape[0])
-        qr = np.interp(sqrtpsin,np.sqrt(psiq),qpsi)
-        Jpol = fp/(4e-7*np.pi*gfile['raxis'])
-        Jtor = gfile['raxis']*pp + (1/(4e-7*np.pi))*0.5*ffp/gfile['raxis']
+            pp = np.asarray(gfile['pprime'])
+            qpsi = np.asarray(gfile['qpsi'])
+            psiq = np.linspace(0,1,qpsi.shape[0])
+            qr = np.interp(sqrtpsin,np.sqrt(psiq),qpsi)
+            Jpol = fp/(4e-7*np.pi*gfile['raxis'])
+            Jtor = gfile['raxis']*pp + (1/(4e-7*np.pi))*0.5*ffp/gfile['raxis']
 
-        J = np.sqrt(Jpol**2 + Jtor**2)
-        psiJ = np.linspace(0,1,J.shape[0])
-        Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
-        Jr = Jr/Jr[0]
-        Ipint = np.trapz(Jr,2*np.pi*(self.params.a*sqrtpsin)**2)
-        Jr = np.abs(Jr/Ipint)
+            J = np.sqrt(Jpol**2 + Jtor**2)
+            psiJ = np.linspace(0,1,J.shape[0])
+            Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
+            Jr = Jr/Jr[0]
+            Ipint = np.trapz(Jr,2*np.pi*(self.algorithms.a*sqrtpsin)**2)
+            Jr = np.abs(Jr/Ipint)
 
-        self.params._addextprof(sqrtpsin,-2)
-        self.params._addextprof(volgrid,-1)
-        self.params._addextprof(Jr,0)
-        self.params._addextprof(qr,5)
-        self.params._addextprof(agrid,-3)
+            self.algorithms._addextprof(sqrtpsin,-2)
+            self.algorithms._addextprof(volgrid,-1)
+            self.algorithms._addextprof(Jr,0)
+            self.algorithms._addextprof(qr,5)
+            self.algorithms._addextprof(agrid,-3)
         pass
 
     def __check_settings(self) -> None:
+        """
+        Checks the settings for consistency.
+        """
         pass
     
     def update_plotsettings(self, plotsettingsfile = None):
@@ -1693,123 +1763,17 @@ betaN = {betaN:.3f}
             self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
         pass
 
-# def copy_params(params:POPCON_params) -> POPCON_params:
-#     new = POPCON_params()
-#     # Populate
-#     try:
-#         new.R = params.R
-#         new.a = params.a
-#         new.kappa = params.kappa
-#         new.delta = params.delta
-#         new.B0 = params.B0
-#         new.Ip = params.Ip
-#         new.M_i = params.M_i
-#         # new.f_LH = params.f_LH
-#         new.tipeak_over_tepeak = params.tipeak_over_tepeak
-#         new.fuel = params.fuel
+class POPCON_scan(POPCON):
+    """
+    Class POPCON_scan
 
-#         new.impurityfractions = params.impurityfractions
-#         new.rdefined = params.rdefined
-#         new.volgriddefined = params.volgriddefined
-#         new._jdefined = params._jdefined
-#         new._nedefined = params._nedefined
-#         new._nidefined = params._nidefined
-#         new._Tidefined = params._Tidefined
-#         new._Tedefined = params._Tedefined
-#         new._qdefined = params._qdefined
-#         new._bmaxdefined = params._bmaxdefined
-#         new._bavgdefined = params._bavgdefined
-        
-#         if new.rdefined:
-#             new.sqrtpsin = params.sqrtpsin
-#             new.nr = params.nr
-#         if new.volgriddefined:
-#             new.volgrid = params.volgrid
-#         if new._jdefined:
-#             new.extprof_j = params.extprof_j
-#         if new._nedefined:
-#             new.extprof_ne = params.extprof_ne
-#         if new._nidefined:
-#             new.extprof_ni = params.extprof_ni
-#         if new._Tidefined:
-#             new.extprof_Ti = params.extprof_Ti
-#         if new._Tedefined:
-#             new.extprof_Te = params.extprof_Te
-#         if new._qdefined:
-#             new.extprof_q = params.extprof_q
-#         if new._bmaxdefined:
-#             new.bmaxprof = params.bmaxprof
-#         if new._bavgdefined:
-#             new.bavgprof = params.bavgprof
-#         try: new.j_alpha1 = params.j_alpha1
-#         except: pass
-#         try: new.j_alpha2 = params.j_alpha2
-#         except: pass
-#         try: new.j_offset = params.j_offset
-#         except: pass
-#         try: new.ne_alpha1 = params.ne_alpha1
-#         except: pass
-#         try: new.ne_alpha2 = params.ne_alpha2
-#         except: pass
-#         try: new.ne_offset = params.ne_offset
-#         except: pass
-#         try: new.ni_alpha1 = params.ni_alpha1
-#         except: pass
-#         try: new.ni_alpha2 = params.ni_alpha2
-#         except: pass
-#         try: new.ni_offset = params.ni_offset
-#         except: pass
-#         try: new.Ti_alpha1 = params.Ti_alpha1
-#         except: pass
-#         try: new.Ti_alpha2 = params.Ti_alpha2
-#         except: pass
-#         try: new.Ti_offset = params.Ti_offset
-#         except: pass
-#         try: new.Te_alpha1 = params.Te_alpha1
-#         except: pass
-#         try: new.Te_alpha2 = params.Te_alpha2
-#         except: pass
-#         try: new.Te_offset = params.Te_offset
-#         except: pass
-#         try: new._jextprof = params._jextprof
-#         except: pass
-#         try: new._neextprof = params._neextprof
-#         except: pass
-#         try: new._niextprof = params._niextprof
-#         except: pass
-#         try: new._Tiextprof = params._Tiextprof
-#         except: pass
-#         try: new._Teextprof = params._Teextprof
-#         except: pass
-
-#         new.j_alpha1 = params.j_alpha1
-#         new.j_alpha2 = params.j_alpha2
-#         new.j_offset = params.j_offset
-#         new.ne_alpha1 = params.ne_alpha1
-#         new.ne_alpha2 = params.ne_alpha2
-#         new.ne_offset = params.ne_offset
-#         new.ni_alpha1 = params.ni_alpha1
-#         new.ni_alpha2 = params.ni_alpha2
-#         new.ni_offset = params.ni_offset
-#         new.Ti_alpha1 = params.Ti_alpha1
-#         new.Ti_alpha2 = params.Ti_alpha2
-#         new.Ti_offset = params.Ti_offset
-#         new.Te_alpha1 = params.Te_alpha1
-#         new.Te_alpha2 = params.Te_alpha2
-#         new.Te_offset = params.Te_offset
-        
-#         new.H_fac = params.H_fac
-#         new.scaling_const = params.scaling_const
-#         new.M_i_alpha = params.M_i_alpha
-#         new.Ip_alpha = params.Ip_alpha
-#         new.R_alpha = params.R_alpha
-#         new.a_alpha = params.a_alpha
-#         new.kappa_alpha = params.kappa_alpha
-#         new.B0_alpha = params.B0_alpha
-#         new.Pheat_alpha = params.Pheat_alpha
-#         new.n20_alpha = params.n20_alpha
-
-#     except Exception as e:
-#         raise e
-    
-#     return new
+    Placeholder class for running scans. Inherits from POPCON.
+    """
+    def __init__(self) -> None:
+        self.datas: list[POPCON_data]
+        self.algorithms_list: list[POPCON_algorithms]
+        self.settings: POPCON_settings
+        self.plotsettings: list[POPCON_plotsettings]
+        self.scalinglaws: dict
+        self.scanvariables: dict[str, np.ndarray]
+        pass
