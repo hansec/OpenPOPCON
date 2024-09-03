@@ -1171,7 +1171,7 @@ class POPCON:
     # Solving
     #-------------------------------------------------------------------
 
-    def run_POPCON(self) -> None:
+    def run_POPCON(self, setuponly=False) -> None:
         """
         Wrapper function that sets up and solves the power balance 
         equations at each point in the grid.
@@ -1193,10 +1193,11 @@ class POPCON:
         self.algorithms.B0_alpha = slparam['B0_alpha']
         self.algorithms.Pheat_alpha = slparam['Pheat_alpha']
         self.algorithms.n20_alpha = slparam['n20_alpha']
-        self.solve()
+        if not setuponly:
+            self.__solve()
 
 
-    def solve(self) -> None:
+    def __solve(self) -> None:
         """
         Does the legwork for run_POPCON.
         """
@@ -1651,7 +1652,7 @@ betaN = {betaN:.3f}
             self.settings.gfilename = str(namepath.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
         if self.settings.profsfilename != '':
             self.settings.profsfilename = str(namepath.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
-        
+        self.run_POPCON(setuponly=True)
         pass
 
     #-------------------------------------------------------------------
