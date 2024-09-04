@@ -1030,6 +1030,7 @@ POPCON_data_spec = [
     ('Pfusionheating', nb.float64[:,:]),
     ('Pohmic', nb.float64[:,:]),
     ('Pbrems', nb.float64[:,:]),
+    ('Psynch', nb.float64[:,:]),
     ('Pimprad', nb.float64[:,:]),
     ('Prad', nb.float64[:,:]),
     ('Pheat', nb.float64[:,:]),
@@ -1071,6 +1072,7 @@ class POPCON_data:
         self.Pfusionheating: np.ndarray
         self.Pohmic: np.ndarray
         self.Pbrems: np.ndarray
+        self.Psynch: np.ndarray
         self.Pimprad: np.ndarray
         self.Prad: np.ndarray
         self.Pheat: np.ndarray
@@ -1253,6 +1255,7 @@ class POPCON:
                     result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
                     result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+                    result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
@@ -1303,6 +1306,7 @@ class POPCON:
         self.output.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pbrems = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Psynch = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pimprad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
