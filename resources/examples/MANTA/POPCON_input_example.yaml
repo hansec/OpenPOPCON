@@ -49,7 +49,6 @@ impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
 #----------------------
 scalinglaw: "H98y2" # Name of tau_E scaling law as defined in scaling_laws.yaml
 H_fac: 0.79 # Factor by which to multiply the scaling law
-nr: 200 # number of radial grid points
 #----------------------
 
 #----------------------
@@ -88,6 +87,7 @@ profsfilename: "profsMANTA.csv"
 #----------------------
 Nn: 50 # resolution of densities
 NTi: 50 # resolution of ion temperatures
+nr: 100 # number of radial grid points
 nmax_frac: 1.0 # maximum electron density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum electron density as a fraction of the Greenwald density
 Tmax_keV: 11. # maximum volume-averaged temperature in keV
@@ -96,4 +96,4 @@ maxit: 100000 # maximum number of iterations
 accel: 1.5 # acceleration factor
 err: 1e-6 # error tolerance
 verbosity: 0 # 0 for no output, 1 for minimal output, 2 for verbose output
-parallel: False
+parallel: True
