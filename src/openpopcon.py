@@ -626,6 +626,16 @@ class POPCON_algorithms:
         P_brem = G*1e-6*np.sqrt(1000*T_e_r)*total_Zeff*(n_e_r/7.69e18)**2
         return P_brem
     
+    def _P_synch(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
+        """
+        Synchrotron radiation power density in MW/m^3; see Zohm 2019.
+        """
+        T_e_r = T_e_keV*self.get_profile(rho, 4)
+        n_e_r = n_e_20*self.get_profile(rho, 1)
+        P_synch = 1.32e-7*(self.B0*T_e_r)**2.5 * np.sqrt(n_e_r/self.a) * (1 + 18*self.a/(self.R*np.sqrt(T_e_r)))
+
+        return P_synch
+    
     def _P_impurity_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
         """
         Radiative power density from impurities in MW/m^3; see Zohm 2019.
@@ -643,7 +653,7 @@ class POPCON_algorithms:
         """
         Total radiative power density in MW/m^3.
         """
-        return self._P_brem_rad(rho, T_e_keV, n_e_20) + self._P_impurity_rad(rho, T_e_keV, n_e_20)
+        return self._P_brem_rad(rho, T_e_keV, n_e_20) + self._P_impurity_rad(rho, T_e_keV, n_e_20) + self._P_synch(rho, T_e_keV, n_e_20)
     
     def _P_OH_prof(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float) -> npt.NDArray[np.float_]:
         """
@@ -684,10 +694,11 @@ class POPCON_algorithms:
         W_tot_iter = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))
         # P_rad_iter = self.volume_integral(self.sqrtpsin, self._P_rad(self.sqrtpsin, T_e_keV, n_e_20))
         P_brem_iter = self.volume_integral(self.sqrtpsin, self._P_brem_rad(self.sqrtpsin, T_e_keV, n_e_20))
+        P_synch_iter = self.volume_integral(self.sqrtpsin, self._P_synch(self.sqrtpsin, T_e_keV, n_e_20))
         P_imp_iter = self.volume_integral(self.sqrtpsin, self._P_impurity_rad(self.sqrtpsin, T_e_keV, n_e_20))
         for ii in np.arange(max_iters):
             # Power in
-            P_totalheating_iter = P_aux_iter + P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter
+            P_totalheating_iter = P_aux_iter + P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter - P_synch_iter
 
             # Power out
             tauE_iter = self.tauE_scalinglaw(P_totalheating_iter, n_e_20*line_average_fac)
@@ -1019,6 +1030,7 @@ POPCON_data_spec = [
     ('Pfusionheating', nb.float64[:,:]),
     ('Pohmic', nb.float64[:,:]),
     ('Pbrems', nb.float64[:,:]),
+    ('Psynch', nb.float64[:,:]),
     ('Pimprad', nb.float64[:,:]),
     ('Prad', nb.float64[:,:]),
     ('Pheat', nb.float64[:,:]),
@@ -1060,6 +1072,7 @@ class POPCON_data:
         self.Pfusionheating: np.ndarray
         self.Pohmic: np.ndarray
         self.Pbrems: np.ndarray
+        self.Psynch: np.ndarray
         self.Pimprad: np.ndarray
         self.Prad: np.ndarray
         self.Pheat: np.ndarray
@@ -1242,6 +1255,7 @@ class POPCON:
                     result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
                     result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+                    result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
                     result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
@@ -1292,6 +1306,7 @@ class POPCON:
         self.output.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pbrems = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Psynch = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pimprad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
@@ -1338,6 +1353,7 @@ class POPCON:
         Pfusion_heating = self.algorithms.volume_integral(rho,self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20))
         Pohmic = self.algorithms.volume_integral(rho,self.algorithms._P_OH_prof(rho, T_e_keV, n_e_20))
         Pbrems = self.algorithms.volume_integral(rho,self.algorithms._P_brem_rad(rho, T_e_keV, n_e_20))
+        Psynch = self.algorithms.volume_integral(rho,self.algorithms._P_synch(rho, T_e_keV, n_e_20))
         Pimprad = self.algorithms.volume_integral(rho,self.algorithms._P_impurity_rad(rho, T_e_keV, n_e_20))
         Prad = self.algorithms.volume_integral(rho,self.algorithms._P_rad(rho, T_e_keV, n_e_20))
         Pheat = Pfusion_heating + Pohmic + Paux - Pbrems
@@ -1348,7 +1364,7 @@ class POPCON:
         tauE = self.algorithms.tauE_scalinglaw(Pheat, n_e_20*line_avg_fac)
         Wtot = self.algorithms.volume_integral(rho,self.algorithms._W_tot_prof(rho,T_i_keV,n_e_20))
         Pconf = Wtot/tauE
-        Ploss = Pconf
+        Ploss = Pconf + Psynch + Pbrems
         f_rad = Prad/Ploss
         Q = self.algorithms.Q_fusion(T_i_keV, n_e_20, Paux)
         H89 = tauE/self.algorithms.tauE_H89(Pheat,n_e_20*line_avg_fac)
@@ -1372,6 +1388,7 @@ P_SOL = {Ploss - Prad:.2f} MW
 P_load = {(Ploss-Prad)/self.algorithms.A:.3f} MW/m^2
 P_ohmic = {Pohmic:.3f} MW
 P_brems = {Pbrems:.3f} MW
+P_synch = {Psynch:.3f} MW
 P_imprad = {Pimprad:.3f} MW
 P_rad = {Prad:.2f} MW
 P_heat = {Pheat:.2f} MW
