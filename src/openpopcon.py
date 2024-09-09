@@ -672,7 +672,10 @@ class POPCON_algorithms:
         dil = self.plasma_dilution(T_e_keV)
         n_i_20 = n_e_20*dil
         P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
-        return P_fusion/(Paux)
+        if Paux == 0:
+            return 9999999.
+        else:
+            return P_fusion/(Paux)
     
     #-------------------------------------------------------------------
     # Power Balance Relaxation Solvers
@@ -720,7 +723,9 @@ class POPCON_algorithms:
                 P_aux_iter = P_brem_iter
 
             # Check for convergence
-            if P_aux_iter < 1.0:
+            if P_aux_iter < 0.001 and dPaux <= 0:
+                break
+            elif P_aux_iter < 1.0:
                 if np.abs(dPaux/1.0) < err:
                     break
             else:
@@ -729,7 +734,7 @@ class POPCON_algorithms:
             
             if ii == max_iters-1:
                 if self.verbosity > 0:
-                    print(f"Power balance relaxation solver did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.")
+                    print(f"Power balance relaxation solver found",P_aux_iter,"but did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.")
         
         # Warn for P_SOL < 0: This is when the impurity radiation power exceeds the total W_tot/tauE.
         # Impurity power is assumed to displace what would otherwise be conductive, turbulent, or instability-driven losses.
@@ -1218,7 +1223,7 @@ class POPCON:
         def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
                         n_e_20:np.ndarray, T_i_keV:np.ndarray, 
                         accel:float=1.2, err:float=1e-5,
-                        maxit:int=1000):
+                        maxit:int=1000, verbosity=self.settings.verbosity):
             """
             Compiling the solver allows for parallelization, as each
             point in the grid can be solved independently.
@@ -1228,6 +1233,8 @@ class POPCON:
             
             for i in nb.prange(nn):
                 for j in nb.prange(nT):
+                    if verbosity > 1:
+                        print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
                     Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
                                                             T_i_keV[j], 
@@ -1238,7 +1245,7 @@ class POPCON:
             return Paux
         
         @nb.njit(parallel=self.settings.parallel)
-        def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi):
+        def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verbosity=self.settings.verbosity):
             """
             Compiling this function is handy as it allows for 
             parallelization of the most computationally expensive
@@ -1248,6 +1255,8 @@ class POPCON:
             line_average_fac = np.average(params.get_profile(rho, 1))
             for i in nb.prange(Nn):
                 for j in nb.prange(NTi):
+                    if verbosity > 1:
+                        print("Populating n20=",result.n_e_20_max[i],", T=",result.T_i_max[j]," keV")
                     dil = params.plasma_dilution(result.T_e_max[j])
                     result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
                     result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
@@ -1275,7 +1284,10 @@ class POPCON:
                     result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
                     result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
             return result
-                
+        
+        if self.settings.verbosity > 0:
+            print("Setting up algorithm object")
+        
         params = self.algorithms
         rho = params.sqrtpsin
         n_G = params.n_GR
@@ -1285,7 +1297,7 @@ class POPCON:
         n_e_20 = np.linspace(self.settings.nmin_frac*n_G/n_e_avg_fac, self.settings.nmax_frac*n_G/n_e_avg_fac, self.settings.Nn)
         T_i_keV = np.linspace(self.settings.Tmin_keV/T_i_avg_fac, self.settings.Tmax_keV/T_i_avg_fac, self.settings.NTi)
         T_e_keV = T_i_keV/self.settings.tipeak_over_tepeak
-
+        
         self.output = POPCON_data()
         self.output.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
         self.output.n_e_20_max = n_e_20
@@ -1295,35 +1307,39 @@ class POPCON:
         self.output.T_e_max = T_e_keV
         self.output.T_e_avg = T_e_keV * T_e_avg_fac
         
+        if self.settings.verbosity > 0:
+            print("Solving power balance equations")
         Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
                                 n_e_20, T_i_keV, self.settings.accel, 
                                 self.settings.err, self.settings.maxit)
 
+        if self.settings.verbosity > 0:
+            print("Power balance solutions found. Populating output arrays.")
         self.output.Paux = Paux
-        self.output.n_i_20_avg = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.n_i_20_max = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pfusion = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pfusionheating = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pohmic = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pbrems = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Psynch = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pimprad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Prad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pheat = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Wtot = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.tauE = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pconf = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Ploss = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pdd = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pdt = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Palpha = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Psol = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.f_rad = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Q = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.H89 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.H98 = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.vloop = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.betaN = np.empty((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.n_i_20_avg = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.n_i_20_max = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pfusion = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pfusionheating = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pohmic = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pbrems = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Psynch = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pimprad = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Prad = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pheat = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Wtot = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.tauE = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pconf = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Ploss = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pdd = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Pdt = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Palpha = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Psol = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.f_rad = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.Q = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.H89 = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.H98 = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.vloop = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
+        self.output.betaN = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
 
         self.output = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi)
 
@@ -1488,6 +1504,10 @@ betaN = {betaN:.3f}
         mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
         if self.plotsettings.fill_invalid:
             ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.05)
+        if np.any(self.output.Q > 1e4):
+            print("burning")
+            maskburning = np.logical_not(np.logical_or(np.isnan(self.output.Q),self.output.Q >=1e4))
+            ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=maskburning),levels=[0,2],colors='r',alpha=0.08)
         if names is None:
             names = self.plotsettings.plotoptions.keys()
         for name in names:
@@ -1702,6 +1722,15 @@ betaN = {betaN:.3f}
 
     def __get_profiles(self) -> None:
         if self.settings.profsfilename == '':
+            if self.settings.ne_offset == 0:
+                self.settings.ne_offset = 1e-6
+            if self.settings.ni_offset == 0:
+                self.settings.ni_offset = 1e-6
+            if self.settings.Ti_offset == 0:
+                self.settings.Ti_offset = 1e-6
+            if self.settings.Te_offset == 0:
+                self.settings.Te_offset = 1e-6
+
             self.algorithms._set_alpha_and_offset(self.settings.ne_alpha1, self.settings.ne_alpha2, self.settings.ne_offset, 1)
             self.algorithms._set_alpha_and_offset(self.settings.ni_alpha1, self.settings.ni_alpha2, self.settings.ni_offset, 2)
             self.algorithms._set_alpha_and_offset(self.settings.Ti_alpha1, self.settings.Ti_alpha2, self.settings.Ti_offset, 3)
@@ -1731,6 +1760,8 @@ betaN = {betaN:.3f}
     def __get_geometry(self) -> None:
         if self.settings.gfilename == '':
             rho = np.linspace(0.001,1,self.settings.nr)
+            if self.settings.j_offset == 0:
+                self.settings.j_offset = 1e-6
             self.algorithms._addextprof(rho,-2)
             self.algorithms._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
             
