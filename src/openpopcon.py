@@ -642,6 +642,7 @@ class POPCON_algorithms:
         """
         T_e_r = T_e_keV*self.get_profile(rho, 4)
         n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
+        T_e_r[T_e_r < 0.05] = 0.05
         Lz = np.empty((T_e_r.shape[0],6),dtype=np.float64)
         for i in np.arange(T_e_r.shape[0]):
             Lz[i,:] = phys.get_rads(T_e_r[i])
@@ -695,7 +696,6 @@ class POPCON_algorithms:
         P_fusion_heating_iter = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, T_i_keV, n_i_20))
         P_ohmic_heating_iter = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
         W_tot_iter = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))
-        # P_rad_iter = self.volume_integral(self.sqrtpsin, self._P_rad(self.sqrtpsin, T_e_keV, n_e_20))
         P_brem_iter = self.volume_integral(self.sqrtpsin, self._P_brem_rad(self.sqrtpsin, T_e_keV, n_e_20))
         P_synch_iter = self.volume_integral(self.sqrtpsin, self._P_synch(self.sqrtpsin, T_e_keV, n_e_20))
         P_imp_iter = self.volume_integral(self.sqrtpsin, self._P_impurity_rad(self.sqrtpsin, T_e_keV, n_e_20))
@@ -1503,31 +1503,32 @@ betaN = {betaN:.3f}
         xx, yy = np.meshgrid(xx,yy)
         mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
         if self.plotsettings.fill_invalid:
-            ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.05)
+            ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.95)
         if np.any(self.output.Q > 1e4):
-            print("burning")
             maskburning = np.logical_not(np.logical_or(np.isnan(self.output.Q),self.output.Q >=1e4))
             ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=maskburning),levels=[0,2],colors='r',alpha=0.08)
         if names is None:
             names = self.plotsettings.plotoptions.keys()
         for name in names:
+            mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
             opdict = self.plotsettings.plotoptions[name]
             if opdict['plot'] == False:
                 continue
-            print("Plotting",name)
             plotoptions = [opdict['color'],opdict['linewidth'],opdict['label'],opdict['fontsize'],opdict['fmt']]
             data = getattr(self.output,name)
             data = np.ma.array(data,mask=mask)
             if opdict['spacing'] == 'lin':
                 if opdict['scale'] == 'minmax':
-                    levels = np.linspace(np.min(data),np.max(data),opdict['levels'])
+                    if self.settings.verbosity > 1:
+                        print(f"{name} min: {np.min(data)}, max: {np.max(data)}, levels: {opdict['levels']}")
+                    levels = np.linspace(0.99*np.min(data),1.01*np.max(data),opdict['levels'])
                 elif opdict['scale'] == 'specified':
                     levels = np.linspace(opdict['min'],opdict['max'],opdict['levels'])
                 else:
                     raise ValueError(f"Invalid scale for {name}. Change scale in plotsettings.")
             elif opdict['spacing'] == 'log':
                 if opdict['scale'] == 'minmax':
-                    levels = np.logspace(np.log10(np.min(data)),np.log10(np.max(data)),opdict['levels'])
+                    levels = np.logspace(np.log10(0.99*np.min(data)),np.log10(1.01*np.max(data)),opdict['levels'])
                 elif opdict['scale'] == 'specified':
                     levels = np.logspace(np.log10(opdict['min']),np.log10(opdict['max']),opdict['levels'])
                 else:
@@ -1536,7 +1537,9 @@ betaN = {betaN:.3f}
                 levels = np.asarray(opdict['manuallevels'],dtype=np.float64)
             else:
                 raise ValueError(f"Invalid spacing for {name}. Change spacing in plotsettings.")
-                
+            
+            if self.settings.verbosity > 0:
+                print(f"Plotting {name} with levels {levels} and options {plotoptions}")
             self.plot_contours(opdict['plot'], ax, data, xx, yy, levels, *plotoptions)
         
         if self.plotsettings.xax == 'T_i_av':
