@@ -1351,6 +1351,10 @@ class POPCON:
         plots the profiles of the solution if plot=True.
         """
         
+        try: self.algorithms
+        except AttributeError:
+            self.run_POPCON(setuponly=True)
+
         n_G = self.algorithms.n_GR
         rho = self.algorithms.sqrtpsin
         n_e_avg_fac = self.algorithms.volume_integral(rho, self.algorithms.get_profile(rho, 1))/self.algorithms.V
@@ -1503,7 +1507,7 @@ betaN = {betaN:.3f}
         xx, yy = np.meshgrid(xx,yy)
         mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
         if self.plotsettings.fill_invalid:
-            ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.95)
+            ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.5)
         if np.any(self.output.Q > 1e4):
             maskburning = np.logical_not(np.logical_or(np.isnan(self.output.Q),self.output.Q >=1e4))
             ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=maskburning),levels=[0,2],colors='r',alpha=0.08)
@@ -1770,7 +1774,7 @@ betaN = {betaN:.3f}
             
         else:
             gfile = read_eqdsk(self.settings.gfilename)
-            psin, volgrid, agrid, _ = get_fluxvolumes(gfile)
+            psin, volgrid, agrid, fs = get_fluxvolumes(gfile)
             sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
             volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
 
@@ -1794,6 +1798,41 @@ betaN = {betaN:.3f}
             Ipint = np.trapz(Jr,2*np.pi*(self.algorithms.a*sqrtpsin)**2)
             Jr = np.abs(Jr/Ipint)
 
+            lcfs = fs[-1]
+            geq_a = (np.max(lcfs[:,0])-np.min(lcfs[:,0]))/2
+            geq_R = (np.max(lcfs[:,0]) - geq_a)
+            geq_z0 = (np.max(lcfs[:,1]) + np.min(lcfs[:,1]))/2
+            geq_kappa = np.abs(np.max(lcfs[:,1]) - np.min(lcfs[:,1]))/(2*geq_a)
+            geq_Rtop = lcfs[np.argmax(lcfs[:,1]),0]
+            geq_Rbot = lcfs[np.argmin(lcfs[:,1]),0]
+            geq_delta = ((geq_R-geq_Rtop)/geq_a + (geq_R-geq_Rtop)/geq_a)/2
+
+            if self.settings.verbosity > 1:
+                print("gEQDSK geometry:")
+                print(f"Minor radius: {geq_a}")
+                print(f"Major radius: {geq_R}")
+                print(f"Elongation: {geq_kappa}")
+                print(f"Triangularity: {geq_delta}")
+                print(f"z0: {geq_z0}")
+
+
+            if np.abs(geq_a/self.settings.a - 1) > 0.1:
+                print(f"Warning: gEQDSK minor radius ({geq_a} m) differs significantly from settings a ({self.settings.a} m). Defaulting to gEQDSK value.")
+                self.settings.a = geq_a
+                self.algorithms.a = geq_a
+            if np.abs(geq_R/self.settings.R - 1) > 0.1:
+                print(f"Warning: gEQDSK major radius ({geq_R} m) differs significantly from settings R ({self.settings.R} m). Defaulting to gEQDSK value.")
+                self.settings.R = geq_R
+                self.algorithms.R = geq_R
+            if np.abs(geq_kappa/self.settings.kappa - 1) > 0.1:
+                print(f"Warning: gEQDSK elongation ({geq_kappa}) differs significantly from settings kappa ({self.settings.kappa}). Defaulting to gEQDSK value.")
+                self.settings.kappa = geq_kappa
+                self.algorithms.kappa = geq_kappa
+            if np.abs(geq_delta/self.settings.delta - 1) > 0.1:
+                print(f"Warning: gEQDSK triangularity ({geq_delta}) differs significantly from settings delta ({self.settings.delta}). Defaulting to gEQDSK value.")
+                self.settings.delta
+                self.algorithms.delta = geq_delta
+                
             self.algorithms._addextprof(sqrtpsin,-2)
             self.algorithms._addextprof(volgrid,-1)
             self.algorithms._addextprof(Jr,0)
