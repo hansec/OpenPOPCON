@@ -3,7 +3,7 @@ import contourpy as cntr
 import csv
 import os
 import pathlib
-
+import numba as nb
 
 def yaml_edit(filename, key, value) -> None:
     with open(filename, 'r') as f:
@@ -213,3 +213,12 @@ def safe_get(unsafe_dict, key, default=None):
         return unsafe_dict[key]
     else:
         return default
+    
+
+def conditional_njit(enable, **kwargs):
+    def dec(func):
+        if enable:
+            return nb.njit(**kwargs)(func)
+        else:
+            return func
+    return dec

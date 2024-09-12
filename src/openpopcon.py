@@ -743,6 +743,11 @@ class POPCON_algorithms:
             if self.verbosity > 0:
                 print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
             P_aux_iter = 99999.
+        
+        if np.isnan(P_aux_iter):
+            if self.verbosity > 0:
+                print("NaN detected in P_aux_relax_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
+            P_aux_iter = 99999.
 
         return P_aux_iter
     #-------------------------------------------------------------------
@@ -1219,71 +1224,6 @@ class POPCON:
         """
         Does the legwork for run_POPCON.
         """
-        @nb.njit(parallel=self.settings.parallel)
-        def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
-                        n_e_20:np.ndarray, T_i_keV:np.ndarray, 
-                        accel:float=1.2, err:float=1e-5,
-                        maxit:int=1000, verbosity=self.settings.verbosity):
-            """
-            Compiling the solver allows for parallelization, as each
-            point in the grid can be solved independently.
-            """
-
-            Paux = np.empty((nn,nT),dtype=np.float64)
-            
-            for i in nb.prange(nn):
-                for j in nb.prange(nT):
-                    if verbosity > 1:
-                        print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
-
-                    Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
-                                                            T_i_keV[j], 
-                                                            accel, 
-                                                            err,
-                                                            maxit)
-                    
-            return Paux
-        
-        @nb.njit(parallel=self.settings.parallel)
-        def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verbosity=self.settings.verbosity):
-            """
-            Compiling this function is handy as it allows for 
-            parallelization of the most computationally expensive
-            part of the code.
-            """
-            rho = params.sqrtpsin
-            line_average_fac = np.average(params.get_profile(rho, 1))
-            for i in nb.prange(Nn):
-                for j in nb.prange(NTi):
-                    if verbosity > 1:
-                        print("Populating n20=",result.n_e_20_max[i],", T=",result.T_i_max[j]," keV")
-                    dil = params.plasma_dilution(result.T_e_max[j])
-                    result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
-                    result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
-                    result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-                    result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-                    result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
-                    result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-                    result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
-                    result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-                    result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-                    result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
-                    result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
-                    result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-                    result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
-                    result.Ploss[i,j] = result.Pconf[i,j]
-                    result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-                    result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-                    result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-                    result.Palpha[i,j] = result.Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
-                    result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
-                    result.f_rad[i,j] = result.Prad[i,j] / result.Ploss[i,j]
-                    result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
-                    result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-                    result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-                    result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
-                    result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
-            return result
         
         if self.settings.verbosity > 0:
             print("Setting up algorithm object")
@@ -1309,9 +1249,18 @@ class POPCON:
         
         if self.settings.verbosity > 0:
             print("Solving power balance equations")
-        Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
-                                n_e_20, T_i_keV, self.settings.accel, 
-                                self.settings.err, self.settings.maxit)
+
+        if self.settings.parallel:
+            Paux = solve_nT_par(params, self.settings.Nn, self.settings.NTi,
+                                    n_e_20, T_i_keV, self.settings.accel, 
+                                    self.settings.err, self.settings.maxit,
+                                    self.settings.verbosity)
+        else:
+            Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
+                                    n_e_20, T_i_keV, self.settings.accel, 
+                                    self.settings.err, self.settings.maxit,
+                                    self.settings.verbosity)
+
 
         if self.settings.verbosity > 0:
             print("Power balance solutions found. Populating output arrays.")
@@ -1340,8 +1289,10 @@ class POPCON:
         self.output.H98 = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.vloop = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         self.output.betaN = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-
-        self.output = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi)
+        if self.settings.parallel:
+            self.output = populate_outputs_par(params, self.output, self.settings.Nn, self.settings.NTi, self.settings.verbosity)
+        else:
+            self.output = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi, self.settings.verbosity)
 
         pass
 
@@ -1853,6 +1804,140 @@ betaN = {betaN:.3f}
         else:
             self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
         pass
+
+# @conditional_njit(enable=self.settings.parallel,parallel=self.settings.parallel)
+@nb.njit(parallel=True)
+def solve_nT_par(params:POPCON_algorithms, nn:int, nT:int,
+                n_e_20:np.ndarray, T_i_keV:np.ndarray, 
+                accel:float=1.2, err:float=1e-5,
+                maxit:int=1000, verbosity=1):
+    """
+    Compiling the solver allows for parallelization, as each
+    point in the grid can be solved independently.
+    """
+
+    Paux = np.empty((nn,nT),dtype=np.float64)
+    
+    for i in nb.prange(nn):
+        for j in nb.prange(nT):
+            if verbosity > 1:
+                print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
+
+            Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
+                                                    T_i_keV[j], 
+                                                    accel, 
+                                                    err,
+                                                    maxit)
+            
+    return Paux
+
+@nb.njit(parallel=False)
+def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
+                n_e_20:np.ndarray, T_i_keV:np.ndarray, 
+                accel:float=1.2, err:float=1e-5,
+                maxit:int=1000, verbosity=1):
+    """
+    Compiling the solver allows for parallelization, as each
+    point in the grid can be solved independently.
+    """
+
+    Paux = np.empty((nn,nT),dtype=np.float64)
+    
+    for i in nb.prange(nn):
+        for j in nb.prange(nT):
+            if verbosity > 1:
+                print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
+
+            Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
+                                                    T_i_keV[j], 
+                                                    accel, 
+                                                    err,
+                                                    maxit)
+            
+    return Paux
+
+
+@nb.njit(parallel=True)
+def populate_outputs_par(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verbosity=1):
+    """
+    Compiling this function is handy as it allows for 
+    parallelization of the most computationally expensive
+    part of the code.
+    """
+    rho = params.sqrtpsin
+    line_average_fac = np.average(params.get_profile(rho, 1))
+    for i in nb.prange(Nn):
+        for j in nb.prange(NTi):
+            if verbosity > 1:
+                print("Populating n20=",result.n_e_20_max[i],", T=",result.T_i_max[j]," keV")
+            dil = params.plasma_dilution(result.T_e_max[j])
+            result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
+            result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
+            result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
+            result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
+            result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+            result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
+            result.Ploss[i,j] = result.Pconf[i,j]
+            result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Palpha[i,j] = result.Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
+            result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
+            result.f_rad[i,j] = result.Prad[i,j] / result.Ploss[i,j]
+            result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
+            result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+            result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+            result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
+            result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
+    return result
+
+@nb.njit(parallel=False)
+def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verbosity=1):
+    """
+    Compiling this function is handy as it allows for 
+    parallelization of the most computationally expensive
+    part of the code.
+    """
+    rho = params.sqrtpsin
+    line_average_fac = np.average(params.get_profile(rho, 1))
+    for i in nb.prange(Nn):
+        for j in nb.prange(NTi):
+            if verbosity > 1:
+                print("Populating n20=",result.n_e_20_max[i],", T=",result.T_i_max[j]," keV")
+            dil = params.plasma_dilution(result.T_e_max[j])
+            result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
+            result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
+            result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
+            result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
+            result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+            result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
+            result.Ploss[i,j] = result.Pconf[i,j]
+            result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
+            result.Palpha[i,j] = result.Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
+            result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
+            result.f_rad[i,j] = result.Prad[i,j] / result.Ploss[i,j]
+            result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
+            result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+            result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
+            result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
+            result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
+    return result
 
 class POPCON_scan(POPCON):
     """
