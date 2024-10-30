@@ -112,19 +112,23 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
                         gEQDSK['nz'])
     # Get and normalize fluxes
     fluxes = gEQDSK['psirz']-gEQDSK['psibry']
-    fmin = np.min(fluxes)
-    fluxes += -fmin
-    fluxes /= np.abs(fmin)
+    if fluxes[0,0] < 0:
+        fluxes = -fluxes
+    raxi = np.argmin(np.abs(rs - gEQDSK['raxis']))
+    zaxi = np.argmin(np.abs(zs - gEQDSK['zaxis']))
+
+    fluxes_axis = fluxes[zaxi, raxi]
+    fluxes += -fluxes_axis
+    fluxes /= np.abs(fluxes_axis)
 
     cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
     allsegs = []
-    psin = np.linspace(0, 1, Npsi)**2
+    psin = np.linspace(0.001, 1, Npsi)**2
     for level in psin:
         allsegs.append(cgen.create_contour(level))
-
     # Filter out stuff below the divertor
     closed_fluxsurfaces = []
-    for segset in allsegs:
+    for psii, segset in enumerate(allsegs):
         true = []
         for i in range(len(segset)):
             if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
