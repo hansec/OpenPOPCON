@@ -4,6 +4,7 @@ import csv
 import os
 import pathlib
 import numba as nb
+import matplotlib.pyplot as plt
 
 def yaml_edit(filename, key, value) -> None:
     with open(filename, 'r') as f:
@@ -183,6 +184,56 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         Agrid[icontour] = np.trapz(2*np.pi*contour[:-1,0] * ds, axis=0)
 
     return psin, Volgrid, Agrid, closed_fluxsurfaces
+
+def get_bavg(gEQDSK: dict, Npsi: int=50):
+    psin, closed_fluxsurfaces = get_contours(gEQDSK, Npsi)
+    # get plasma color map from matplotlib
+    from matplotlib import cm
+    plasma = cm.get_cmap('plasma', Npsi)
+
+    # plot flux surfaces
+    fig, ax = plt.subplots()
+    for i, contour in enumerate(closed_fluxsurfaces):
+        ax.plot(contour[:, 0], contour[:, 1], color=plasma(psin[::-1][i]))
+    ax.set_aspect('equal')
+
+    # plot limiter
+    ax.plot(gEQDSK['rzlim'][:, 0], gEQDSK['rzlim'][:, 1], 'r')
+
+    plt.show()
+
+def get_contours(gEQDSK: dict, Npsi: int=50):
+    rs = np.linspace(gEQDSK['rleft'],
+                        gEQDSK['rleft'] + gEQDSK['rdim'],
+                        gEQDSK['nr'])
+    zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
+                        gEQDSK['zmid'] + gEQDSK['zdim']/2,
+                        gEQDSK['nz'])
+    # Get and normalize fluxes
+    fluxes = gEQDSK['psirz']-gEQDSK['psibry']
+    fmin = np.min(fluxes)
+    fluxes += -fmin
+    fluxes /= np.abs(fmin)
+
+    cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
+    allsegs = []
+    psin = np.linspace(0, 1, Npsi)**2
+    for level in psin:
+        allsegs.append(cgen.create_contour(level))
+    
+    # Filter out stuff below the divertor
+    closed_fluxsurfaces = []
+    for segset in allsegs:
+        true = []
+        for i in range(len(segset)):
+            if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
+                true.append(i)
+        if len(true) == 0:
+            raise ValueError('No true path found')
+        for truei in true:
+            closed_fluxsurfaces.append(segset[truei])
+    
+    return psin, closed_fluxsurfaces
 
 def read_profsfile(filename):
     with open(filename, 'r') as f:
