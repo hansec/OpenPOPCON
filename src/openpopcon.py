@@ -61,8 +61,8 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('_Tidefined', nb.boolean),
             ('_Tedefined', nb.boolean),
             ('_qdefined', nb.boolean),
-            ('_bmaxdefined', nb.boolean),
-            ('_bavgdefined', nb.boolean),
+            ('_ftrappeddefined', nb.boolean),
+            ('_extradefined', nb.boolean),
             ('j_alpha1', nb.float64),
             ('j_alpha2', nb.float64),
             ('j_offset', nb.float64),
@@ -84,8 +84,8 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('Te_prof', nb.float64[:]),
             ('Ti_prof', nb.float64[:]),
             ('q_prof', nb.float64[:]),
-            ('bmaxprof', nb.float64[:]),
-            ('bavgprof', nb.float64[:]),
+            ('ftrapped_prof', nb.float64[:]),
+            ('extraprof', nb.float64[:]),
             ('extprof_impfracs', nb.float64[:]),
             ('H_fac', nb.float64),
             ('scaling_const', nb.float64),
@@ -188,8 +188,8 @@ class POPCON_algorithms:
         self._Tidefined: bool = False                           # Whether Ti profile is defined
         self._Tedefined: bool = False                           # Whether Te profile is defined
         self._qdefined: bool = False                            # Whether q profile is defined
-        self._bmaxdefined: bool = False                         # Whether b_max profile is defined (not implemented)
-        self._bavgdefined: bool = False                         # Whether b_avg profile is defined (not implemented)
+        self._ftrappeddefined: bool = False                         # Whether b_max profile is defined (not implemented)
+        self._extradefined: bool = False                         # Whether b_avg profile is defined (not implemented)
 
         #---------------------------------------------------------------
         # Parameters for parabolic profiles case
@@ -232,8 +232,8 @@ class POPCON_algorithms:
         self.Te_prof = np.empty(0,dtype=np.float64)             # Electron temperature profile
         self.Ti_prof = np.empty(0,dtype=np.float64)             # Ion temperature profile
         self.q_prof  = np.empty(0,dtype=np.float64)             # Safety factor profile
-        self.bmaxprof   = np.empty(0,dtype=np.float64)          # Maximum B field on flux surface (not implemented)
-        self.bavgprof   = np.empty(0,dtype=np.float64)          # Average B field on flux surface (not implemented)
+        self.ftrapped_prof   = np.empty(0,dtype=np.float64)          # Maximum B field on flux surface (not implemented)
+        self.extraprof   = np.empty(0,dtype=np.float64)          # Average B field on flux surface (not implemented)
         self.extprof_impfracs = np.empty(0,dtype=np.float64)    # Impurity fractions profile (not implemented)
 
         #---------------------------------------------------------------
@@ -300,7 +300,7 @@ class POPCON_algorithms:
         3: Ti profile
         4: Te profile
         5: q profile
-        6: bmax profile
+        6: ftrapped profile
         7: bavg profile
         """
         if profid == -3:
@@ -340,13 +340,13 @@ class POPCON_algorithms:
                 raise ValueError("q profile not defined.")
             return np.interp(rho, self.sqrtpsin, self.q_prof)
         elif profid == 6:
-            if not self._bmaxdefined:
-                raise ValueError("bmax profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.bmaxprof)
+            if not self._ftrappeddefined:
+                raise ValueError("ftrapped profile not defined.")
+            return np.interp(rho, self.sqrtpsin, self.ftrapped_prof)
         elif profid == 7:
-            if not self._bavgdefined:
-                raise ValueError("bavg profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.bavgprof)
+            if not self._extradefined:
+                raise ValueError("extra profile not defined.")
+            return np.interp(rho, self.sqrtpsin, self.extraprof)
         else:
             raise ValueError("Invalid profile ID.")
     
@@ -405,7 +405,7 @@ class POPCON_algorithms:
     #     # eta = const*Z_eff*ln(Lambda)*(T_e (keV))^(-3/2)
     #     return 
     
-    def eta_NC(self, rho, T_e_keV:float, n_e_20:float) -> float:
+    def eta_NC(self, rho, T_e_keV:float, n_e_20:float):
         """
         Neoclassical resistivity in Ohm-m.
 
@@ -433,13 +433,31 @@ class POPCON_algorithms:
         C_R = 0.56/Zeffprof * (3.0 - Zeffprof) / (3.0 + Zeffprof)
         xi = 0.58 + 0.2*Zeffprof
         invaspect = self.a/self.R
-        f_t = np.sqrt(2*rho*invaspect) # TODO: Replace with Jardin formula
+    
+        if not self._ftrappeddefined:
+            f_t = np.sqrt(2*rho*invaspect)
+            nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
+            eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
+        else:
+            f_t_prof = self.get_profile(rho, 6)
+            nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t_prof * invaspect * (T_e_r*1e3)**2)
+            eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t_prof/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t_prof/( 1 + xi * nu_star_e ) )
 
-        nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
-
-        eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
         eta_NC = eta_C / eta_C_eta_NC_ratio
-        return eta_NC
+
+        f_CL = (1+1.2*Zeffprof + 0.22*Zeffprof**2)/(1+3*Zeffprof + 0.75*Zeffprof**2)
+        
+        f_NC = 1/ ( 1- np.sqrt( 2*invaspect / (1 + invaspect) ) )
+
+        eta_NC_2 = eta_C * f_CL * f_NC
+
+        eta_NC_max = np.empty_like(eta_NC)
+
+        for i in range(len(eta_NC)):
+            eta_NC_max[i] = max(eta_NC[i], eta_NC_2[i])
+
+        return eta_NC_max
+
     
     def Vloop(self, T_e_keV, n_e_20) -> float:
         """
@@ -449,6 +467,7 @@ class POPCON_algorithms:
         """
         P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
         return P_OH/self.Ip
+
         
     
     def BetaN(self, T_i_keV, n_e_20) -> float:
@@ -805,15 +824,16 @@ class POPCON_algorithms:
             self.q_prof = extprofvals
             self._qdefined = True
         elif profid == 6:
-            if self._bmaxdefined:
-                raise ValueError("bmax profile already defined.")
-            self.bmaxprof = extprofvals
-            self._bmaxdefined = True
+            if self._ftrappeddefined:
+                raise ValueError("ftrapped profile already defined.")
+            self.ftrapped_prof = extprofvals
+            self._ftrappeddefined = True
         elif profid == 7:
-            if self._bavgdefined:
-                raise ValueError("bavg profile already defined.")
-            self.bavgprof = extprofvals
-            self._bavgdefined = True
+            if self._extradefined:
+                raise ValueError("extra profile already defined." + \
+                                 " This is unused.")
+            self.extraprof = extprofvals
+            self._extradefined = True
         else:
             raise ValueError("Invalid profile ID.")
         
@@ -897,12 +917,12 @@ class POPCON_algorithms:
             # self.q_a = 2*np.pi*self.a**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self.q_prof = 2*np.pi*(self.a*rho)**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self._qdefined = True
-        if not self._bmaxdefined:
-            self.bmaxprof = np.sqrt((self.B0*self.R/(self.R-rho*self.a))**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
-            self._bmaxdefined = True
-        if not self._bavgdefined:
-            self.bavgprof = np.sqrt((self.B0)**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
-            self._bavgdefined = True
+        if not self._ftrappeddefined:
+            self.ftrapped_prof = np.sqrt((self.B0*self.R/(self.R-rho*self.a))**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
+            self._ftrappeddefined = True
+        if not self._extradefined:
+            self.extraprof = np.sqrt((self.B0)**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
+            self._extradefined = True
         pass
 
 # NOT jit compiled
@@ -1758,6 +1778,8 @@ betaN = {betaN:.3f}
             geq_Rbot = lcfs[np.argmin(lcfs[:,1]),0]
             geq_delta = ((geq_R-geq_Rtop)/geq_a + (geq_R-geq_Rtop)/geq_a)/2
 
+
+
             if self.settings.verbosity > 1:
                 print("gEQDSK geometry:")
                 print(f"Minor radius: {geq_a}")
@@ -1766,6 +1788,10 @@ betaN = {betaN:.3f}
                 print(f"Triangularity: {geq_delta}")
                 print(f"z0: {geq_z0}")
 
+            psin, ftrapped_profile = get_trapped_particle_fraction(gfile)
+            ftrapped_profile = np.interp(sqrtpsin,np.sqrt(psin),ftrapped_profile)
+
+            print(np.shape(ftrapped_profile))
 
             if np.abs(geq_a/self.settings.a - 1) > 0.1:
                 print(f"Warning: gEQDSK minor radius ({geq_a} m) differs significantly from settings a ({self.settings.a} m). Defaulting to gEQDSK value.")
@@ -1789,6 +1815,7 @@ betaN = {betaN:.3f}
             self.algorithms._addextprof(Jr,0)
             self.algorithms._addextprof(qr,5)
             self.algorithms._addextprof(agrid,-3)
+            self.algorithms._addextprof(ftrapped_profile,6)
         pass
 
     def __check_settings(self) -> None:
