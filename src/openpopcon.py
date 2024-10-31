@@ -1496,14 +1496,14 @@ betaN = {betaN:.3f}
                 if opdict['scale'] == 'minmax':
                     if self.settings.verbosity > 1:
                         print(f"{name} min: {np.min(data)}, max: {np.max(data)}, levels: {opdict['levels']}")
-                    levels = np.linspace(0.99*np.min(data),1.01*np.max(data),opdict['levels'])
+                    levels = np.linspace(1.01*np.min(data),0.99*np.max(data),opdict['levels'])
                 elif opdict['scale'] == 'specified':
                     levels = np.linspace(opdict['min'],opdict['max'],opdict['levels'])
                 else:
                     raise ValueError(f"Invalid scale for {name}. Change scale in plotsettings.")
             elif opdict['spacing'] == 'log':
                 if opdict['scale'] == 'minmax':
-                    levels = np.logspace(np.log10(0.99*np.min(data)),np.log10(1.01*np.max(data)),opdict['levels'])
+                    levels = np.logspace(np.log10(1.01*np.min(data)),np.log10(0.99*np.max(data)),opdict['levels'])
                 elif opdict['scale'] == 'specified':
                     levels = np.logspace(np.log10(opdict['min']),np.log10(opdict['max']),opdict['levels'])
                 else:
