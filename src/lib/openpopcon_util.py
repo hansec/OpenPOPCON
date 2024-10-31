@@ -4,6 +4,8 @@ import csv
 import os
 import pathlib
 import numba as nb
+import matplotlib.pyplot as plt
+from scipy.interpolate import RectBivariateSpline
 
 def yaml_edit(filename, key, value) -> None:
     with open(filename, 'r') as f:
@@ -88,6 +90,23 @@ def read_eqdsk(filename):
         eqdsk_obj['rzout'] = read_2d(fid, eqdsk_obj['nbbs'], 2)
         # Read limiting corners
         eqdsk_obj['rzlim'] = read_2d(fid, eqdsk_obj['nlim'], 2)
+
+        R = np.linspace(eqdsk_obj['rleft'],
+                        eqdsk_obj['rleft'] + eqdsk_obj['rdim'],
+                        eqdsk_obj['nr'])
+        
+        Z = np.linspace(eqdsk_obj['zmid'] - eqdsk_obj['zdim']/2,
+                        eqdsk_obj['zmid'] + eqdsk_obj['zdim']/2,
+                        eqdsk_obj['nz'])
+        
+        eqdsk_obj['R'], eqdsk_obj['Z'] = np.meshgrid(R, Z)
+
+        eqdsk_obj['Bt_rz'] = eqdsk_obj['bcentr'] * eqdsk_obj['rcentr'] / eqdsk_obj['R']
+        
+        dpsidZ, dpsidR = np.gradient(eqdsk_obj['psirz'], R, Z)
+        eqdsk_obj['Br_rz'] = -dpsidZ / eqdsk_obj['R']
+        eqdsk_obj['Bz_rz'] = dpsidR / eqdsk_obj['R']
+
     return eqdsk_obj
 
 def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
@@ -187,6 +206,81 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         Agrid[icontour] = np.trapz(2*np.pi*contour[:-1,0] * ds, axis=0)
 
     return psin, Volgrid, Agrid, closed_fluxsurfaces
+
+def get_trapped_particle_fraction(gEQDSK: dict, Npsi: int=50):
+    psin, closed_fluxsurfaces = get_contours(gEQDSK, Npsi)
+    # closed_fluxsurfaces[5]
+    Bt = gEQDSK['Bt_rz']
+    Br = gEQDSK['Br_rz']
+    Bz = gEQDSK['Bz_rz']
+
+    Bt_interp = RectBivariateSpline(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bt.T)
+    Br_interp = RectBivariateSpline(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Br.T)
+    Bz_interp = RectBivariateSpline(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bz.T)
+
+    B2avg = np.zeros(len(psin))
+    Bm2avg = np.zeros(len(psin))
+    funcavg = np.zeros(len(psin))
+
+    for i, psi in enumerate(psin):
+        contour = closed_fluxsurfaces[i]
+        R = contour[:,0]
+        Z = contour[:,1]
+        Bt = Bt_interp(R, Z, grid=False)
+        Br = Br_interp(R, Z, grid=False)
+        Bz = Bz_interp(R, Z, grid=False)
+        B2 = Bt**2 + Br**2 + Bz**2
+        Bm2 = 1/(Bt**2 + Br**2 + Bz**2)
+        B = np.sqrt(B2)
+        Bc = np.max(B)
+        func = np.sqrt(1-B/Bc) - (1/3) * (1-B/Bc)**(3/2)
+        func *= Bm2
+
+        B2avg[i] = np.mean(B2)
+        Bm2avg[i] = np.mean(Bm2)
+        funcavg[i] = np.mean(func)
+
+    f = 1 - B2avg * Bm2avg + (3/2) * B2avg * funcavg
+
+    return psin, f
+
+def get_contours(gEQDSK: dict, Npsi: int=50):
+    rs = np.linspace(gEQDSK['rleft'],
+                        gEQDSK['rleft'] + gEQDSK['rdim'],
+                        gEQDSK['nr'])
+    zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
+                        gEQDSK['zmid'] + gEQDSK['zdim']/2,
+                        gEQDSK['nz'])
+    # Get and normalize fluxes
+    fluxes = gEQDSK['psirz']-gEQDSK['psibry']
+    if fluxes[0,0] < 0:
+        fluxes = -fluxes
+    raxi = np.argmin(np.abs(rs - gEQDSK['raxis']))
+    zaxi = np.argmin(np.abs(zs - gEQDSK['zaxis']))
+
+    fluxes_axis = fluxes[zaxi, raxi]
+    fluxes += -fluxes_axis
+    fluxes /= np.abs(fluxes_axis)
+
+    cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
+    allsegs = []
+    psin = np.linspace(0.001, 1, Npsi)**2
+    for level in psin:
+        allsegs.append(cgen.create_contour(level))
+    # Filter out stuff below the divertor
+    closed_fluxsurfaces = []
+    for psii, segset in enumerate(allsegs):
+        true = []
+        for i in range(len(segset)):
+            if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
+                true.append(i)
+        if len(true) == 0:
+            raise ValueError('No true path found')
+        for truei in true:
+            closed_fluxsurfaces.append(segset[truei])
+
+    
+    return psin, closed_fluxsurfaces
 
 def read_profsfile(filename):
     with open(filename, 'r') as f:
