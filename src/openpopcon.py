@@ -40,6 +40,7 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('delta', nb.float64),
             ('B0', nb.float64),
             ('Ip', nb.float64),
+            ('Itot', nb.float64),
             ('H', nb.float64),
             ('M_i', nb.float64),
             ('tipeak_over_tepeak', nb.float64),
@@ -158,6 +159,7 @@ class POPCON_algorithms:
         self.delta: float                  # Triangularity
         self.B0: float                     # Magnetic field at axis in Tesla
         self.Ip: float                     # Plasma current in MA
+        self.Itot: float                   # Total current in MA
         self.M_i: float                    # Ion mass in amu
         self.tipeak_over_tepeak: float     # Ti/Te peak ratio
         #*** 1 = D-D, 2 = D-T, 3 = D-He3 ***
@@ -681,7 +683,7 @@ class POPCON_algorithms:
         """
 
         eta_NC = self.eta_NC(rho, T_e_keV, n_e_20)
-        J = self.Ip*1e6*self.get_profile(rho, 0)
+        J = self.Itot*1e6*self.get_profile(rho, 0)
         return 1e-6*eta_NC*J**2
 
     def Q_fusion(self, T_i_keV:float, n_e_20:float, Paux:float) -> float:
@@ -692,10 +694,11 @@ class POPCON_algorithms:
         dil = self.plasma_dilution(T_e_keV)
         n_i_20 = n_e_20*dil
         P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
+        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
         if Paux == 0:
             return 9999999.
         else:
-            return P_fusion/(Paux)
+            return P_fusion/(Paux + P_OH)
     
     #-------------------------------------------------------------------
     # Power Balance Relaxation Solvers
@@ -1742,32 +1745,25 @@ betaN = {betaN:.3f}
                 self.settings.j_offset = 1e-6
             self.algorithms._addextprof(rho,-2)
             self.algorithms._set_alpha_and_offset(self.settings.j_alpha1, self.settings.j_alpha2, self.settings.j_offset, 0)
+            self.algorithms.Itot = self.settings.Ip
             
         else:
             gfile = read_eqdsk(self.settings.gfilename)
-            psin, volgrid, agrid, fs = get_fluxvolumes(gfile)
+            psin, volgrid, agrid, fs = get_fluxvolumes(gfile, self.settings.nr)
             sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
             volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
-
-            ffp = np.asarray(gfile['ffprim'])
-            psi = np.linspace(0,1,ffp.shape[0])
-            f2 = np.cumsum(ffp)*np.diff(psi)[0] + gfile['fpol'][0]**2
-            f = np.sqrt(f2)
-            fp = np.gradient(f,psi)
-
-            pp = np.asarray(gfile['pprime'])
+            _, jrms, jtoravg, cross_sec_areas = get_current_density(gfile, self.settings.nr)
             qpsi = np.asarray(gfile['qpsi'])
             psiq = np.linspace(0,1,qpsi.shape[0])
             qr = np.interp(sqrtpsin,np.sqrt(psiq),qpsi)
-            Jpol = fp/(4e-7*np.pi*gfile['raxis'])
-            Jtor = gfile['raxis']*pp + (1/(4e-7*np.pi))*0.5*ffp/gfile['raxis']
 
-            J = np.sqrt(Jpol**2 + Jtor**2)
-            psiJ = np.linspace(0,1,J.shape[0])
-            Jr = np.interp(sqrtpsin,np.sqrt(psiJ),J)
-            Jr = Jr/Jr[0]
-            Ipint = np.trapz(Jr,2*np.pi*(self.algorithms.a*sqrtpsin)**2)
-            Jr = np.abs(Jr/Ipint)
+
+
+            Ipint = np.abs(np.trapz(y=jtoravg, x=cross_sec_areas))
+            Jrmsint = np.abs(np.trapz(y=jrms, x=cross_sec_areas))
+            
+            Jrms_norm = jrms/Jrmsint
+
 
             lcfs = fs[-1]
             geq_a = (np.max(lcfs[:,0])-np.min(lcfs[:,0]))/2
@@ -1787,9 +1783,21 @@ betaN = {betaN:.3f}
                 print(f"Elongation: {geq_kappa}")
                 print(f"Triangularity: {geq_delta}")
                 print(f"z0: {geq_z0}")
+                print("gEQDSK Ip:",Ipint)
 
+
+            
             psin, ftrapped_profile = get_trapped_particle_fraction(gfile)
             ftrapped_profile = np.interp(sqrtpsin,np.sqrt(psin),ftrapped_profile)
+
+            if self.settings.verbosity > 1:
+                print("Len of psin:",len(psin))
+                print("Len of sqrtpsin:",len(sqrtpsin))
+                print("Len of volgrid:",len(volgrid))
+                print("Len of jrms:",len(jrms))
+                print("Len of qr:",len(qr))
+                print("Len of agrid:",len(agrid))
+                print("Len of ftrapped_profile:",len(ftrapped_profile))
 
             print(np.shape(ftrapped_profile))
 
@@ -1809,10 +1817,15 @@ betaN = {betaN:.3f}
                 print(f"Warning: gEQDSK triangularity ({geq_delta}) differs significantly from settings delta ({self.settings.delta}). Defaulting to gEQDSK value.")
                 self.settings.delta
                 self.algorithms.delta = geq_delta
+            if np.abs(Ipint/self.settings.Ip - 1) > 0.1:
+                print(f"Warning: gEQDSK Ip ({Ipint}) differs significantly from settings Ip ({self.settings.Ip}). Defaulting to gEQDSK value.")
+                self.settings.Ip = Ipint
+                self.algorithms.Ip = Ipint
                 
             self.algorithms._addextprof(sqrtpsin,-2)
             self.algorithms._addextprof(volgrid,-1)
-            self.algorithms._addextprof(Jr,0)
+            self.algorithms._addextprof(Jrms_norm,0)
+            self.algorithms.Itot = Ipint
             self.algorithms._addextprof(qr,5)
             self.algorithms._addextprof(agrid,-3)
             self.algorithms._addextprof(ftrapped_profile,6)
