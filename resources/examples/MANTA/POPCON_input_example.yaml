@@ -92,8 +92,8 @@ nmax_frac: 1.0 # maximum electron density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum electron density as a fraction of the Greenwald density
 Tmax_keV: 11. # maximum volume-averaged temperature in keV
 Tmin_keV: 6. # minimum volume-averaged temperature in keV
-maxit: 100000 # maximum number of iterations
+maxit: 1000 # maximum number of iterations
 accel: 1.5 # acceleration factor
 err: 1e-6 # error tolerance
-verbosity: 0 # 0 for no output, 1 for minimal output, 2 for verbose output
+verbosity: 2 # 0 for no output, 1 for minimal output, 2 for verbose output
 parallel: True
