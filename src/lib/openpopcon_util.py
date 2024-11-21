@@ -5,7 +5,7 @@ import os
 import pathlib
 import numba as nb
 import matplotlib.pyplot as plt
-from scipy.interpolate import RectBivariateSpline
+from scipy.interpolate import RectBivariateSpline as RBS
 
 def yaml_edit(filename, key, value) -> None:
     with open(filename, 'r') as f:
@@ -128,6 +128,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
                         gEQDSK['zmid'] + gEQDSK['zdim']/2,
                         gEQDSK['nz'])
+    
     # Get and normalize fluxes
     fluxes = gEQDSK['psirz']-gEQDSK['psibry']
     if fluxes[0,0] < 0:
@@ -144,7 +145,8 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     psin = np.linspace(0.001, 1, Npsi)**2
     for level in psin:
         allsegs.append(cgen.create_contour(level))
-    # Filter out stuff below the divertor
+    
+    # Sometimes the flux surfaces have multiple paths including levels outside the plasma, filter these out
     closed_fluxsurfaces = []
     for psii, segset in enumerate(allsegs):
         true = []
@@ -152,7 +154,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
             if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
                 true.append(i)
         if len(true) == 0:
-            raise ValueError('No true path found')
+            raise ValueError(f'No true path found for flux surface psi={psin[psii]}')
         for truei in true:
             closed_fluxsurfaces.append(segset[truei])
 
@@ -200,7 +202,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         # Top cap
         V += 0.5*np.pi*dh * (xouters[-1]**2 - xinners[-1]**2)
         Volgrid[icontour] = V
-        # Get the area of the flux surface
+        # Get the surface area of the flux surface
         d = np.diff(contour, axis=0)
         ds = np.sqrt(d[:, 0]**2 + d[:, 1]**2)
         Agrid[icontour] = np.trapz(2*np.pi*contour[:-1,0] * ds, axis=0)
@@ -214,9 +216,9 @@ def get_trapped_particle_fraction(gEQDSK: dict, Npsi: int=50):
     Br = gEQDSK['Br_rz']
     Bz = gEQDSK['Bz_rz']
 
-    Bt_interp = RectBivariateSpline(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bt.T)
-    Br_interp = RectBivariateSpline(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Br.T)
-    Bz_interp = RectBivariateSpline(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bz.T)
+    Bt_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bt.T)
+    Br_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Br.T)
+    Bz_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bz.T)
 
     B2avg = np.zeros(len(psin))
     Bm2avg = np.zeros(len(psin))
@@ -282,6 +284,53 @@ def get_contours(gEQDSK: dict, Npsi: int=50):
     
     return psin, closed_fluxsurfaces
 
+def get_current_density(gEQDSK: dict, Npsi: int=50):
+    zs = np.linspace(gEQDSK['zmid']-0.5*gEQDSK['zdim'], gEQDSK['zmid']+0.5*gEQDSK['zdim'], gEQDSK['psirz'].shape[1])
+    rs = np.linspace(gEQDSK['rleft'], gEQDSK['rleft']+gEQDSK['rdim'], gEQDSK['psirz'].shape[0])
+    psirz = gEQDSK['psirz']
+    psinrz = (psirz-gEQDSK['psimag'])/(gEQDSK['psibry']-gEQDSK['psimag'])
+
+    psin, volgrid, agrid, fs = get_fluxvolumes(gEQDSK, Npsi)
+    sqrtpsin = np.sqrt(psin)
+    volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
+
+    ffp = np.asarray(gEQDSK['ffprim'])
+    psi = np.linspace(gEQDSK['psimag'],gEQDSK['psibry'],np.shape(ffp)[0])
+
+    fpolrz = np.interp(psirz, psi, gEQDSK['fpol'])
+    fprimrz = np.interp(psirz, psi, np.gradient(gEQDSK['fpol'], psi))
+    ffprz = np.interp(psirz, psi, gEQDSK['ffprim'])
+    pprz = np.interp(psirz, psi, gEQDSK['pprime'])
+    jpolrz = 1/rs*fprimrz*np.gradient(psirz, rs,zs)
+    gradstarpsi = -(4e-7*np.pi)*rs**2*pprz - 0.5*ffprz
+    jtorrz = 1/rs * gradstarpsi
+    jtot = np.sqrt(jpolrz[0]**2 + jpolrz[1]**2 + jtorrz**2)
+    tantheta = np.sqrt(jpolrz[0]**2 + jpolrz[1]**2)/jtorrz
+    pitchangle = np.arctan(tantheta)
+    jtotspline = RBS(zs, rs, jtot)
+    jtorspline = RBS(zs, rs, jtorrz)
+
+    jtoravg = np.zeros_like(psin)
+    javgrms = np.zeros_like(psin)
+    cross_sec_areas = np.zeros(len(fs))
+    for i, level in enumerate(psin):
+        contour = fs[i]
+        ri = contour[:,0]
+        zi = contour[:,1]
+        rmid = 0.5*(ri[1:]+ri[:-1])
+        zmid = 0.5*(zi[1:]+zi[:-1])
+        lengths = np.sqrt(np.diff(ri)**2 + np.diff(zi)**2)
+        totallength = np.sum(lengths)
+        # Root mean square of the current density since OH Power is ~ J^2
+        javgrms[i] = np.sqrt(np.sum(np.abs(jtotspline.ev(zmid, rmid)**2*lengths))/totallength)
+        jtoravg[i] = np.sum(np.abs(jtorspline.ev(zmid, rmid)*lengths))/totallength
+
+        dr = np.diff(ri)
+        dz = np.diff(zi)
+        cross_sec_areas[i] = np.sum(rmid*dz - zmid*dr)/2
+    
+    return psin, javgrms, jtoravg, cross_sec_areas
+
 def read_profsfile(filename):
     with open(filename, 'r') as f:
         reader = csv.reader(f)
@@ -304,7 +353,6 @@ def read_profsfile(filename):
         profstable['rho'] = profstable['r']
 
     return profstable
-
 
 def safe_get(unsafe_dict, key, default=None):
     if key in unsafe_dict:
