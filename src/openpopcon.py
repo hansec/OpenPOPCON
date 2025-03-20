@@ -1593,17 +1593,21 @@ betaN = {betaN:.3f}
     # File I/O
     #-------------------------------------------------------------------
 
-    def write_output(self, name:str='', archive:bool=True, overwrite:bool=False) -> None:
+    def write_output(self, name:str='', archive:bool=True, overwrite:bool=False, directory:str=None) -> None:
         """
         Saves the output results to a directory. If archive is True,
         archives the directory as a zip file. If overwrite is True,
-        overwrites the directory/zip if it already exists.
+        overwrites the directory/zip if it already exists. The directory
+        parameter allows specifying the storage location.
         """
         if name == '':
             name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
 
-        outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
-        # Check if directory exists
+        if directory is None:
+            outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+        else:
+            outputsdir = pathlib.Path(directory)
+
         direxists = outputsdir.joinpath(name).exists()
         zipexists = outputsdir.joinpath(name + '.zip').exists()
         if not (direxists or zipexists):
@@ -1644,11 +1648,15 @@ betaN = {betaN:.3f}
             shutil.rmtree(savedir)
             shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
 
-    def read_output(self, name: str) -> None:
+    def read_output(self, name: str, directory: str = None) -> None:
         """
         Restores the POPCON object based on the output directory.
         """
-        outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+        if directory is None:
+            outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+        else:
+            outputsdir = pathlib.Path(directory)
+
         if name.endswith('.zip'):
             outputsdir.joinpath(name[:-4]).mkdir()
             shutil.unpack_archive(outputsdir.joinpath(name), outputsdir.joinpath(name[:-4]))
