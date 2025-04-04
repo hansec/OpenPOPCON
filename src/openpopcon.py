@@ -413,7 +413,7 @@ class POPCON_algorithms:
         """
         Neoclassical resistivity in Ohm-m.
 
-        Equations 16-17 from [1] Jardin et al. 1993
+        Equations 16-17 from [1] Jardin et al. 1993, or equation 6 from [8] Paz-Soldan et al. 2016
         """
 
         if np.any(rho <= 0):
