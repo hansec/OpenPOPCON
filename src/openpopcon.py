@@ -98,6 +98,7 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('B0_alpha', nb.float64),
             ('Pheat_alpha', nb.float64),
             ('n20_alpha', nb.float64),
+            ('resistivity_alg', nb.int16),
             ('verbosity', nb.int64),
           ]) # type: ignore
 class POPCON_algorithms:
@@ -256,6 +257,7 @@ class POPCON_algorithms:
         #---------------------------------------------------------------
         # Etc
         #---------------------------------------------------------------
+        self.resistivity_alg: int = 0                           # Resistivity algorithm. 0 = Jardin, 1 = Paz-Soldan, 2 = local maximum
         self.verbosity: int = 0                                 # Verbosity level. 0 = silent, 1 = normal, 2 = debug, 3 = print all matrices
 
         pass
@@ -445,7 +447,11 @@ class POPCON_algorithms:
             nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t_prof * invaspect * (T_e_r*1e3)**2)
             eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t_prof/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t_prof/( 1 + xi * nu_star_e ) )
 
+
         eta_NC = eta_C / eta_C_eta_NC_ratio
+
+        if self.resistivity_alg == 0:
+            return eta_NC
 
         f_CL = (1+1.2*Zeffprof + 0.22*Zeffprof**2)/(1+3*Zeffprof + 0.75*Zeffprof**2)
         
@@ -453,12 +459,19 @@ class POPCON_algorithms:
 
         eta_NC_2 = eta_C * f_CL * f_NC
 
-        eta_NC_max = np.empty_like(eta_NC)
+        if self.resistivity_alg == 1:
+            return eta_NC_2
 
-        for i in range(len(eta_NC)):
-            eta_NC_max[i] = max(eta_NC[i], eta_NC_2[i])
+        if self.resistivity_alg == 2:
+            eta_NC_max = np.empty_like(eta_NC)
 
-        return eta_NC_max
+            for i in range(len(eta_NC)):
+                eta_NC_max[i] = max(eta_NC[i], eta_NC_2[i])
+
+            return eta_NC_max
+        
+        else:
+            raise ValueError("Invalid resistivity algorithm. Must be 0, 1, or 2.")
 
     
     def Vloop(self, T_e_keV, n_e_20) -> float:
@@ -1028,8 +1041,6 @@ class POPCON_settings:
             self.Te_alpha2 = float(safe_get(data,'Te_alpha2',1.5))
             self.Te_offset = float(safe_get(data,'Te_offset',0))
 
-            
-
             #-----------------------------------------------------------
             # Settings
             #-----------------------------------------------------------
@@ -1039,6 +1050,7 @@ class POPCON_settings:
             self.nmin_frac = float(data['nmin_frac'])
             self.Tmax_keV = float(data['Tmax_keV'])
             self.Tmin_keV = float(data['Tmin_keV'])
+            self.resistivity_model = str(safe_get(data,'resistivity_model','jardin')).lower()
             self.maxit = int(data['maxit'])
             self.accel = float(data['accel'])
             self.err = float(data['err'])
@@ -1500,6 +1512,8 @@ betaN = {betaN:.3f}
                     if self.settings.verbosity > 1:
                         print(f"{name} min: {np.min(data)}, max: {np.max(data)}, levels: {opdict['levels']}")
                     levels = np.linspace(1.01*np.min(data),0.99*np.max(data),opdict['levels'])
+                    if levels[-1] < levels[0]:
+                        levels = levels[::-1]
                 elif opdict['scale'] == 'specified':
                     levels = np.linspace(opdict['min'],opdict['max'],opdict['levels'])
                 else:
@@ -1696,6 +1710,9 @@ betaN = {betaN:.3f}
         self.scalinglaws = data
 
     def __setup_params(self) -> None:
+
+        res_dict = {"jardin": 0, "paz-soldan": 1, "maximum":2, "max":2}
+
         self.algorithms = POPCON_algorithms()
         self.algorithms.R = self.settings.R
         self.algorithms.a = self.settings.a
@@ -1708,6 +1725,7 @@ betaN = {betaN:.3f}
         self.algorithms.fuel = self.settings.fuel
         self.algorithms.impurityfractions = self.settings.impurityfractions
         self.algorithms.verbosity = self.settings.verbosity
+        self.algorithms.resistivity_alg = res_dict[self.settings.resistivity_model.lower()]
 
     def __get_profiles(self) -> None:
         if self.settings.profsfilename == '':
@@ -1748,7 +1766,7 @@ betaN = {betaN:.3f}
 
     def __get_geometry(self) -> None:
         if self.settings.gfilename == '':
-            rho = np.linspace(0.001,1,self.settings.nr)
+            rho = np.sqrt(np.linspace(0.001,1,self.settings.nr))
             if self.settings.j_offset == 0:
                 self.settings.j_offset = 1e-6
             self.algorithms._addextprof(rho,-2)
@@ -1758,7 +1776,7 @@ betaN = {betaN:.3f}
         else:
             gfile = read_eqdsk(self.settings.gfilename)
             psin, volgrid, agrid, fs = get_fluxvolumes(gfile, self.settings.nr)
-            sqrtpsin = np.linspace(0.001,0.97,self.settings.nr)
+            sqrtpsin = np.sqrt(np.linspace(0.001,0.98,self.settings.nr))
             volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
             _, jrms, jtoravg, cross_sec_areas = get_current_density(gfile, self.settings.nr)
             qpsi = np.asarray(gfile['qpsi'])

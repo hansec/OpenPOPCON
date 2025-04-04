@@ -87,11 +87,12 @@ profsfilename: "profsMANTA.csv"
 #----------------------
 Nn: 50 # resolution of densities
 NTi: 50 # resolution of ion temperatures
-nr: 100 # number of radial grid points
+nr: 200 # number of radial grid points
 nmax_frac: 1.0 # maximum electron density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum electron density as a fraction of the Greenwald density
 Tmax_keV: 11. # maximum volume-averaged temperature in keV
 Tmin_keV: 6. # minimum volume-averaged temperature in keV
+resistivity_model: "Jardin" # Jardin, Paz-Soldan or maximum (suggested: Jardin)
 maxit: 1000 # maximum number of iterations
 accel: 1.5 # acceleration factor
 err: 1e-6 # error tolerance

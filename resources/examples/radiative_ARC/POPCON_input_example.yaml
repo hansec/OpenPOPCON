@@ -93,6 +93,7 @@ nmax_frac: 1.2 # maximum density as a fraction of the Greenwald density
 nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
 Tmax_keV: 15. # maximum volume-averaged temperature in keV
 Tmin_keV: 3 # minimum volume-averaged temperature in keV
+resistivity_model: "Jardin" # Jardin, Paz-Soldan or maximum (suggested: Jardin)
 maxit: 100000 # maximum number of iterations
 accel: 1.5 # acceleration factor
 err: 1e-6 # error tolerance
