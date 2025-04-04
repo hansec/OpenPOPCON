@@ -39,14 +39,13 @@ pc.plot()
 
 [5] Y. R. Martin, T. Takizuka (and the ITPA CDBM H.-mode Threshold Database Working Group), *Power Requirement for Accessing the H-Mode in ITER*, J. Phys.: Conf. Ser. **123**, 012033 (2008).
 
-[6] H. Zohm, *On the Use of High Magnetic Field in Reactor Grade Tokamaks*, J Fusion Energ 
+[6] H. Zohm, *On the Use of High Magnetic Field in Reactor Grade Tokamaks*, J Fusion Energy **38**, 3 (2019).
 
 [7] I. P. E. G. on Confinement, Transport, I. P. E. G. on C. Modelling, Database, and I. P. B. Editors, Chapter 2: Plasma confinement and transport, Nucl. Fusion 39, 2175 (1999).
 
 [8] C. Paz-Soldan, R. J. L. Haye, D. Shiraki, R. J. Buttery, N. W. Eidietis, E. M. Hollmann, R. A. Moyer, J. E. Boom, I. T. Chapman, and J. E. T. Contributors, The non-thermal origin of the tokamak low-density stability limit, Nucl. Fusion 56, 056010 (2016).
 
 
-**38**, 3 (2019).
 
 ## Numerical strategy
 
