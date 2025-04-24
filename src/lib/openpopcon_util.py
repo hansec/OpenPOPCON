@@ -288,7 +288,6 @@ def get_current_density(gEQDSK: dict, Npsi: int=50):
     zs = np.linspace(gEQDSK['zmid']-0.5*gEQDSK['zdim'], gEQDSK['zmid']+0.5*gEQDSK['zdim'], gEQDSK['psirz'].shape[1])
     rs = np.linspace(gEQDSK['rleft'], gEQDSK['rleft']+gEQDSK['rdim'], gEQDSK['psirz'].shape[0])
     psirz = gEQDSK['psirz']
-    psinrz = (psirz-gEQDSK['psimag'])/(gEQDSK['psibry']-gEQDSK['psimag'])
 
     psin, volgrid, agrid, fs = get_fluxvolumes(gEQDSK, Npsi)
     sqrtpsin = np.sqrt(psin)
@@ -296,17 +295,14 @@ def get_current_density(gEQDSK: dict, Npsi: int=50):
 
     ffp = np.asarray(gEQDSK['ffprim'])
     psi = np.linspace(gEQDSK['psimag'],gEQDSK['psibry'],np.shape(ffp)[0])
-
-    fpolrz = np.interp(psirz, psi, gEQDSK['fpol'])
-    fprimrz = np.interp(psirz, psi, np.gradient(gEQDSK['fpol'], psi))
-    ffprz = np.interp(psirz, psi, gEQDSK['ffprim'])
-    pprz = np.interp(psirz, psi, gEQDSK['pprime'])
+    reverse = gEQDSK['psimag'] > gEQDSK['psibry']
+    fprimrz = np.interp(psirz, psi[::1-2*reverse], np.gradient(gEQDSK['fpol'][::1-2*reverse], psi[::1-2*reverse]))
+    ffprz = np.interp(psirz, psi[::1-2*reverse], gEQDSK['ffprim'][::1-2*reverse])
+    pprz = np.interp(psirz, psi[::1-2*reverse], gEQDSK['pprime'][::1-2*reverse])
     jpolrz = 1/rs*fprimrz*np.gradient(psirz, rs,zs)
     gradstarpsi = -(4e-7*np.pi)*rs**2*pprz - 0.5*ffprz
     jtorrz = 1/rs * gradstarpsi
     jtot = np.sqrt(jpolrz[0]**2 + jpolrz[1]**2 + jtorrz**2)
-    tantheta = np.sqrt(jpolrz[0]**2 + jpolrz[1]**2)/jtorrz
-    pitchangle = np.arctan(tantheta)
     jtotspline = RBS(zs, rs, jtot)
     jtorspline = RBS(zs, rs, jtorrz)
 
@@ -327,7 +323,7 @@ def get_current_density(gEQDSK: dict, Npsi: int=50):
 
         dr = np.diff(ri)
         dz = np.diff(zi)
-        cross_sec_areas[i] = np.sum(rmid*dz - zmid*dr)/2
+        cross_sec_areas[i] = np.abs(np.sum(rmid*dz - zmid*dr)/2)
     
     return psin, javgrms, jtoravg, cross_sec_areas
 
