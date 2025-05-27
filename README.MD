@@ -49,6 +49,8 @@ pc.plot()
 
 ## Numerical strategy
 
+<img width="1668" alt="image" src="https://github.com/user-attachments/assets/a1234137-260f-4c5b-9124-c8312b3b9ef7" />
+
 OpenPOPCON employs a relaxation algorithm instead of solving power balance directly. This means it can often take quite long to converge on an answer compared to a code that would solve the problem explicitly. However, we have taken an approach with [numba](https://numba.pydata.org/) to speed up the code. This means that the code is compiled to machine code and can be run much faster than a traditional python code. To make full use of this feature, run OpenPOPCON from a Jupyter notebook. Every time you restart the Jupyter notebook, the code will be recompiled. The code structure is as follows:
 
 ```python
