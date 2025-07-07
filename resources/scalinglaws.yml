@@ -30,3 +30,30 @@ H_NT23:
   B0_alpha: 0.18
   Pheat_alpha: -0.89
   n20_alpha: 0.46
+
+ISSO_fake:
+  scaling_const: 0.148
+  M_i_alpha: 0 #TO DO: implement as if statement
+  Ip_alpha: 0 #TO DO: implement as if statement
+  R_alpha: 0.64
+  a_alpha: 2.33
+  kappa_alpha: 0 #TO DO: implement as if statement
+  B0_alpha: 0.85
+  Pheat_alpha: -0.61
+  n20_alpha: 0.55
+  # iota_23_alpha: 0.41  # For future real ISSO
+
+ISSO:
+  scaling_const: 0.134
+  M_i_alpha: 0 #TO DO: implement as if statement
+  Ip_alpha: 0 #TO DO: implement as if statement
+  R_alpha: 0.64
+  a_alpha: 2.28
+  kappa_alpha: 0 #TO DO: implement as if statement
+  B0_alpha: 0.84
+  n20_alpha: 0.54
+  Pheat_alpha: -0.61
+  iota_alpha: -0.41
+  f_ren: 1.0
+
+  

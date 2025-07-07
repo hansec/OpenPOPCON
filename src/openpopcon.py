@@ -34,6 +34,8 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
 # core of calculations
 # jit compiled
 @nb.experimental.jitclass(spec = [
+            ('iota_23', nb.float64),  # if you plan to pass in iota(2/3)
+        ('iota_alpha', nb.float64),
             ('R', nb.float64), 
             ('a', nb.float64),
             ('kappa', nb.float64),
@@ -52,6 +54,7 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('impurityfractions', nb.float64[:]),
             ('geomsdefined', nb.boolean),
             ('rdefined', nb.boolean),
+            ('is_stellarator', nb.boolean),
             ('volgriddefined', nb.boolean),
             ('agriddefined', nb.boolean),
             ('extprof_imps', nb.boolean),
@@ -185,6 +188,7 @@ class POPCON_algorithms:
         self.extprof_imps: bool = False                         # Whether impurity profiles are defined (not implemented)
         self.impsdefined: bool = False                          # Whether impurity fractions are defined
 
+        self.is_stellarator: bool = False
         self._jdefined: bool = False                            # Whether J profile is defined
         self._nedefined: bool = False                           # Whether ne profile is defined
         self._nidefined: bool = False                           # Whether ni profile is defined
@@ -201,6 +205,8 @@ class POPCON_algorithms:
         Normalized parabolic profiles (or polynomial-like) are defined:
         f(rho) = (1 - offset) * (1 + rho^alpha1)^alpha2 + offset
         """
+
+        self.iota_23: float = 1.0
 
         self.j_alpha1: float = 2.
         self.j_alpha2: float = 3.
@@ -253,7 +259,8 @@ class POPCON_algorithms:
         self.B0_alpha: float = 0.15                             # Toroidal field scaling law exponent
         self.Pheat_alpha: float = -0.69                         # Power degradation scaling law exponent
         self.n20_alpha: float = 0.41                            # Greenwald density scaling law exponent
-
+        self.iota_alpha: float = 0.41                           # Iota scaling law exponent (stellarator only)
+        
         #---------------------------------------------------------------
         # Etc
         #---------------------------------------------------------------
@@ -501,12 +508,15 @@ class POPCON_algorithms:
         """
         User-chosen confinement time scaling law
         """
-        tauE = self.H_fac*self.scaling_const
-        tauE *= self.M_i**self.M_i_alpha
-        tauE *= self.Ip**self.Ip_alpha
+        tauE = self.H_fac * self.scaling_const
+        if self.is_stellarator and self.iota_alpha != 0.0:
+            tauE *= self.iota_23**self.iota_alpha
+        if not self.is_stellarator:
+            tauE *= self.M_i**self.M_i_alpha
+            tauE *= self.Ip**self.Ip_alpha
+            tauE *= self.kappa**self.kappa_alpha
         tauE *= self.R**self.R_alpha
         tauE *= self.a**self.a_alpha
-        tauE *= self.kappa**self.kappa_alpha
         tauE *= self.B0**self.B0_alpha
         tauE *= Pheat**self.Pheat_alpha
         tauE *= n_e_20**self.n20_alpha
@@ -543,6 +553,8 @@ class POPCON_algorithms:
         tauE *= Pheat**(-0.5)
         tauE *= n_e_20**0.1
         return tauE
+    
+    
 
     #-------------------------------------------------------------------
     # Power profiles
@@ -1015,6 +1027,7 @@ class POPCON_settings:
             self.M_i = f_D * 2.014 + f_T * 3.016 + np.dot(self.impurityfractions, np.array([4.002, 20.18, 39.948, 83.80, 131.29, 183.84]))
 
             self.scalinglaw = str(data['scalinglaw'])
+            self.is_stellarator = bool(safe_get(data, 'is_stellarator', False))
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
 
@@ -1240,6 +1253,7 @@ class POPCON:
 
         self.algorithms._setup_profs()
         scalinglaw = self.settings.scalinglaw
+        self.algorithms.is_stellarator = self.settings.is_stellarator
         slparam = self.scalinglaws[scalinglaw]
         self.algorithms.H_fac = self.settings.H_fac
         self.algorithms.scaling_const = slparam['scaling_const']
@@ -1707,6 +1721,12 @@ betaN = {betaN:.3f}
         assert 'H89' in data.keys()
         assert 'H98y2' in data.keys()
         assert 'H_NT23' in data.keys()
+        assert 'ISSO_fake' in data.keys()
+        
+        device_str = data.get("device_type", "tokamak").lower()
+        self.device_type = device_str
+        self.device = 0 if device_str == "tokamak" else 1
+        self.is_tokamak = self.device == 0
         self.scalinglaws = data
 
     def __setup_params(self) -> None:
