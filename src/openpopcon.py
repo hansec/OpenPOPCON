@@ -508,12 +508,16 @@ class POPCON_algorithms:
         User-chosen confinement time scaling law
         """
         tauE = self.H_fac * self.scaling_const
-        if self.device_type == 1: 
-            tauE *= self.iota_23**self.iota_alpha
-        else:
-            tauE *= self.M_i**self.M_i_alpha
-            tauE *= self.Ip**self.Ip_alpha
-            tauE *= self.kappa**self.kappa_alpha
+        if self.device_type == 1: #stellarator
+            if hasattr(self, 'iota_alpha'):
+                tauE *= self.iota_23**self.iota_alpha
+        else: #tokamak
+            if hasattr(self, 'M_i_alpha'):
+                tauE *= self.M_i ** self.M_i_alpha
+            if hasattr(self, 'Ip_alpha'):
+                tauE *= self.Ip ** self.Ip_alpha
+            if hasattr(self, 'kappa_alpha'):
+                tauE *= self.kappa ** self.kappa_alpha
         tauE *= self.R**self.R_alpha
         tauE *= self.a**self.a_alpha
         tauE *= self.B0**self.B0_alpha
@@ -1263,11 +1267,12 @@ class POPCON:
         slparam = self.scalinglaws[scalinglaw]
         self.algorithms.H_fac = self.settings.H_fac
         self.algorithms.scaling_const = slparam['scaling_const']
-        self.algorithms.M_i_alpha = slparam['M_i_alpha']
-        self.algorithms.Ip_alpha = slparam['Ip_alpha']
+        self.algorithms.M_i_alpha = slparam.get('M_i_alpha',0.0)
+        self.algorithms.Ip_alpha = slparam.get('Ip_alpha',0.0)
+        self.algorithms.kappa_alpha = slparam.get('kappa_alpha', 0.0)
+        self.algorithms.iota_alpha = slparam.get('iota_alpha', 0.0)
         self.algorithms.R_alpha = slparam['R_alpha']
         self.algorithms.a_alpha = slparam['a_alpha']
-        self.algorithms.kappa_alpha = slparam['kappa_alpha']
         self.algorithms.B0_alpha = slparam['B0_alpha']
         self.algorithms.Pheat_alpha = slparam['Pheat_alpha']
         self.algorithms.n20_alpha = slparam['n20_alpha']
