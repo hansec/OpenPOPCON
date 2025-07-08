@@ -30,3 +30,16 @@ H_NT23:
   B0_alpha: 0.18
   Pheat_alpha: -0.89
   n20_alpha: 0.46
+
+
+ISSO:
+  scaling_const: 0.148
+  R_alpha: 0.64
+  a_alpha: 2.33
+  B0_alpha: 0.85
+  n20_alpha: -0.55
+  Pheat_alpha: -0.61
+  iota_alpha: 0.41
+  f_ren: 1.0
+
+  

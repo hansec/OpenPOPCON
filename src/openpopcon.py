@@ -34,6 +34,8 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
 # core of calculations
 # jit compiled
 @nb.experimental.jitclass(spec = [
+            ('iota_23', nb.float64),  # if you plan to pass in iota(2/3)
+            ('iota_alpha', nb.float64),
             ('R', nb.float64), 
             ('a', nb.float64),
             ('kappa', nb.float64),
@@ -52,6 +54,7 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('impurityfractions', nb.float64[:]),
             ('geomsdefined', nb.boolean),
             ('rdefined', nb.boolean),
+            ('device_type', nb.int16),  # 0 = tokamak, 1 = stellarator
             ('volgriddefined', nb.boolean),
             ('agriddefined', nb.boolean),
             ('extprof_imps', nb.boolean),
@@ -202,6 +205,8 @@ class POPCON_algorithms:
         f(rho) = (1 - offset) * (1 + rho^alpha1)^alpha2 + offset
         """
 
+        self.iota_23: float = 1.0
+
         self.j_alpha1: float = 2.
         self.j_alpha2: float = 3.
         self.j_offset: float = 0.
@@ -253,7 +258,8 @@ class POPCON_algorithms:
         self.B0_alpha: float = 0.15                             # Toroidal field scaling law exponent
         self.Pheat_alpha: float = -0.69                         # Power degradation scaling law exponent
         self.n20_alpha: float = 0.41                            # Greenwald density scaling law exponent
-
+        self.iota_alpha: float = 0.41                           # Iota scaling law exponent (stellarator only)
+        
         #---------------------------------------------------------------
         # Etc
         #---------------------------------------------------------------
@@ -290,7 +296,7 @@ class POPCON_algorithms:
     # Profiles and integration
     #-------------------------------------------------------------------
 
-    def get_profile(self, rho:npt.NDArray[np.float_], profid:int) -> npt.NDArray[np.float_]:
+    def get_profile(self, rho:npt.NDArray[np.float64], profid:int) -> npt.NDArray[np.float64]:
         """
         Returns the profile for a given profile ID at a given rho.
         Allows for easy interpolation at runtime and avoids implementing
@@ -501,12 +507,19 @@ class POPCON_algorithms:
         """
         User-chosen confinement time scaling law
         """
-        tauE = self.H_fac*self.scaling_const
-        tauE *= self.M_i**self.M_i_alpha
-        tauE *= self.Ip**self.Ip_alpha
+        tauE = self.H_fac * self.scaling_const
+        if self.device_type == 1: #stellarator
+            if hasattr(self, 'iota_alpha'):
+                tauE *= self.iota_23**self.iota_alpha
+        else: #tokamak
+            if hasattr(self, 'M_i_alpha'):
+                tauE *= self.M_i ** self.M_i_alpha
+            if hasattr(self, 'Ip_alpha'):
+                tauE *= self.Ip ** self.Ip_alpha
+            if hasattr(self, 'kappa_alpha'):
+                tauE *= self.kappa ** self.kappa_alpha
         tauE *= self.R**self.R_alpha
         tauE *= self.a**self.a_alpha
-        tauE *= self.kappa**self.kappa_alpha
         tauE *= self.B0**self.B0_alpha
         tauE *= Pheat**self.Pheat_alpha
         tauE *= n_e_20**self.n20_alpha
@@ -543,12 +556,14 @@ class POPCON_algorithms:
         tauE *= Pheat**(-0.5)
         tauE *= n_e_20**0.1
         return tauE
+    
+    
 
     #-------------------------------------------------------------------
     # Power profiles
     #-------------------------------------------------------------------
 
-    def _W_tot_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_e_20:float):
+    def _W_tot_prof(self, rho:npt.NDArray[np.float64], T_i_keV:float, n_e_20:float):
         """
         Plasma energy per cubic meter; also pressure.
         """
@@ -561,7 +576,7 @@ class POPCON_algorithms:
         # = 3/2 * (n_i_r) ( 1.60218e-22 * T_i_r (keV) ) (MJ/m^3)
         return 3/2 * 1.60218e-22 * (n_i_r * T_i_r + n_e_r * T_e_r)
     
-    def _P_DDpT_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
+    def _P_DDpT_prof(self, rho:npt.NDArray[np.float64], T_i_keV:float, n_i_20:float):
         """
         D(d,p)T power per cubic meter
         """
@@ -583,7 +598,7 @@ class POPCON_algorithms:
         f_ddpt = np.power( ( dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,2) * 1e-6
         return 1.60218e-22 * f_ddpt * (1.01e3 + 3.02e3)
     
-    def _P_DDnHe3_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
+    def _P_DDnHe3_prof(self, rho:npt.NDArray[np.float64], T_i_keV:float, n_i_20:float):
         """
         D(d,n)He3 power per cubic meter
         """
@@ -604,7 +619,7 @@ class POPCON_algorithms:
         f_ddnhe3 = np.power( (  dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,3) * 1e-6
         return 1.60218e-22 * f_ddnhe3 * (2.45e3 + 0.82e3)
     
-    def _P_DTnHe4_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
+    def _P_DTnHe4_prof(self, rho:npt.NDArray[np.float64], T_i_keV:float, n_i_20:float):
         """
         T(d,n)He4 power density in MW/m^3
         """
@@ -627,7 +642,7 @@ class POPCON_algorithms:
         f_dtnhe4 = dfrac*(n_i_r) * tfrac*(n_i_r) * phys.get_reactivity(T_i_r,1) * 1e-6
         return 1.60218e-22 * f_dtnhe4 * (3.52e3 + 14.06e3)
     
-    def _P_fusion_heating(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
+    def _P_fusion_heating(self, rho:npt.NDArray[np.float64], T_i_keV:float, n_i_20:float):
         """
         D-D and D-T heating power density in MW/m^3
         """
@@ -635,7 +650,7 @@ class POPCON_algorithms:
               self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)*(0.82e3/(2.45e3+0.82e3))+\
               self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)*(3.52e3/(3.52e3+14.06e3))
     
-    def _P_fusion(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
+    def _P_fusion(self, rho:npt.NDArray[np.float64], T_i_keV:float, n_i_20:float):
         """
         Fusion power density in MW/m^3
         """
@@ -643,7 +658,7 @@ class POPCON_algorithms:
                 self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)+\
                 self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)
     
-    def _P_brem_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
+    def _P_brem_rad(self, rho:npt.NDArray[np.float64], T_e_keV:float, n_e_20:float):
         """
         Radiative power density in MW/m^3; See formulary.
         """
@@ -660,7 +675,7 @@ class POPCON_algorithms:
         P_brem = G*1e-6*np.sqrt(1000*T_e_r)*total_Zeff*(n_e_r/7.69e18)**2
         return P_brem
     
-    def _P_synch(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
+    def _P_synch(self, rho:npt.NDArray[np.float64], T_e_keV:float, n_e_20:float):
         """
         Synchrotron radiation power density in MW/m^3; see Zohm 2019.
         """
@@ -670,7 +685,7 @@ class POPCON_algorithms:
 
         return P_synch
     
-    def _P_impurity_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
+    def _P_impurity_rad(self, rho:npt.NDArray[np.float64], T_e_keV:float, n_e_20:float):
         """
         Radiative power density from impurities in MW/m^3; see Zohm 2019.
         """
@@ -684,13 +699,13 @@ class POPCON_algorithms:
         P_line = np.sum(1e-6*(Lz.T*(n_e_r)**2).T*self.impurityfractions,axis=1)
         return P_line
     
-    def _P_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
+    def _P_rad(self, rho:npt.NDArray[np.float64], T_e_keV:float, n_e_20:float):
         """
         Total radiative power density in MW/m^3.
         """
         return self._P_brem_rad(rho, T_e_keV, n_e_20) + self._P_impurity_rad(rho, T_e_keV, n_e_20) + self._P_synch(rho, T_e_keV, n_e_20)
     
-    def _P_OH_prof(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float) -> npt.NDArray[np.float_]:
+    def _P_OH_prof(self, rho:npt.NDArray[np.float64], T_e_keV:float, n_e_20:float) -> npt.NDArray[np.float64]:
         """
         Ohmic power density in MW/m^3
         """
@@ -996,6 +1011,9 @@ class POPCON_settings:
             self.fuel = int(data['fuel'])
             if self.fuel == 3:
                 raise ValueError("D-He3 fuel cycle not implemented yet. Please use D-D or D-T.")
+            self.device_type = str(safe_get(data, 'device_type', 'tokamak')).lower()
+            if self.device_type not in ['tokamak', 'stellarator']:
+                raise ValueError("device_type must be 'tokamak' or 'stellarator'")
             self.impurityfractions = np.array(data['impurityfractions'], dtype=np.float64)
             if 'Zeff_target' in data and 'impurity' in data:
                 impurity = int(data['impurity'])
@@ -1240,14 +1258,21 @@ class POPCON:
 
         self.algorithms._setup_profs()
         scalinglaw = self.settings.scalinglaw
+        if self.settings.device_type == "stellarator":
+            self.algorithms.device_type = 1
+        elif self.settings.device_type == "tokamak":
+            self.algorithms.device_type = 0
+        else:
+            raise ValueError(f"Invalid device_type: {self.settings.device_type}")
         slparam = self.scalinglaws[scalinglaw]
         self.algorithms.H_fac = self.settings.H_fac
         self.algorithms.scaling_const = slparam['scaling_const']
-        self.algorithms.M_i_alpha = slparam['M_i_alpha']
-        self.algorithms.Ip_alpha = slparam['Ip_alpha']
+        self.algorithms.M_i_alpha = slparam.get('M_i_alpha',0.0)
+        self.algorithms.Ip_alpha = slparam.get('Ip_alpha',0.0)
+        self.algorithms.kappa_alpha = slparam.get('kappa_alpha', 0.0)
+        self.algorithms.iota_alpha = slparam.get('iota_alpha', 0.0)
         self.algorithms.R_alpha = slparam['R_alpha']
         self.algorithms.a_alpha = slparam['a_alpha']
-        self.algorithms.kappa_alpha = slparam['kappa_alpha']
         self.algorithms.B0_alpha = slparam['B0_alpha']
         self.algorithms.Pheat_alpha = slparam['Pheat_alpha']
         self.algorithms.n20_alpha = slparam['n20_alpha']
@@ -1704,10 +1729,19 @@ betaN = {betaN:.3f}
             data = yaml.safe_load(open(scalinglawfile, 'r'))
         else:
             raise ValueError('Filename must end with .yaml or .yml')
-        assert 'H89' in data.keys()
-        assert 'H98y2' in data.keys()
-        assert 'H_NT23' in data.keys()
+        
+        device_type = getattr(self.settings, 'device_type', 'tokamak').lower()
+        
+        if device_type == "tokamak":
+            assert 'H89' in data.keys()
+            assert 'H98y2' in data.keys()
+            assert 'H_NT23' in data.keys()
+        elif device_type == "stellarator":
+            assert 'ISSO' in data.keys()
+        else:
+            raise ValueError(f"Unknown device_type '{device_type}', must be 'tokamak' or 'stellarator'")
         self.scalinglaws = data
+    
 
     def __setup_params(self) -> None:
 
@@ -1726,6 +1760,7 @@ betaN = {betaN:.3f}
         self.algorithms.impurityfractions = self.settings.impurityfractions
         self.algorithms.verbosity = self.settings.verbosity
         self.algorithms.resistivity_alg = res_dict[self.settings.resistivity_model.lower()]
+        self.algorithms.device_type = 1 if self.settings.device_type == "stellarator" else 0
 
     def __get_profiles(self) -> None:
         if self.settings.profsfilename == '':
