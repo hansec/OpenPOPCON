@@ -3,7 +3,7 @@
 # Machine Paramters
 #-----------------------------------------------------------------------
 
-name: "SPARC"
+name: "STELLARATOR"
 
 R: 1.85 # major radius in meters
 a: 0.57 # minor radius in meters
@@ -48,7 +48,8 @@ impurity: 2 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
 
 #----------------------
 scalinglaw: "ISSO" # Name of tau_E scaling law as defined in scaling_laws.yaml
-is_stellarator: true  # Set to True for stellarator runs
+device_type: stellarator #tokamak or stellarator 
+iota_23: 1 #stellarator scaling law constant
 
 
 H_fac: 1. # Factor by which to multiply the scaling law

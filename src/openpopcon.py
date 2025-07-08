@@ -35,7 +35,7 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
 # jit compiled
 @nb.experimental.jitclass(spec = [
             ('iota_23', nb.float64),  # if you plan to pass in iota(2/3)
-        ('iota_alpha', nb.float64),
+            ('iota_alpha', nb.float64),
             ('R', nb.float64), 
             ('a', nb.float64),
             ('kappa', nb.float64),
@@ -54,7 +54,7 @@ DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
             ('impurityfractions', nb.float64[:]),
             ('geomsdefined', nb.boolean),
             ('rdefined', nb.boolean),
-            ('is_stellarator', nb.boolean),
+            ('device_type', nb.int16),  # 0 = tokamak, 1 = stellarator
             ('volgriddefined', nb.boolean),
             ('agriddefined', nb.boolean),
             ('extprof_imps', nb.boolean),
@@ -188,7 +188,6 @@ class POPCON_algorithms:
         self.extprof_imps: bool = False                         # Whether impurity profiles are defined (not implemented)
         self.impsdefined: bool = False                          # Whether impurity fractions are defined
 
-        self.is_stellarator: bool = False
         self._jdefined: bool = False                            # Whether J profile is defined
         self._nedefined: bool = False                           # Whether ne profile is defined
         self._nidefined: bool = False                           # Whether ni profile is defined
@@ -509,9 +508,9 @@ class POPCON_algorithms:
         User-chosen confinement time scaling law
         """
         tauE = self.H_fac * self.scaling_const
-        if self.is_stellarator and self.iota_alpha != 0.0:
+        if self.device_type == 1: 
             tauE *= self.iota_23**self.iota_alpha
-        if not self.is_stellarator:
+        else:
             tauE *= self.M_i**self.M_i_alpha
             tauE *= self.Ip**self.Ip_alpha
             tauE *= self.kappa**self.kappa_alpha
@@ -1008,6 +1007,9 @@ class POPCON_settings:
             self.fuel = int(data['fuel'])
             if self.fuel == 3:
                 raise ValueError("D-He3 fuel cycle not implemented yet. Please use D-D or D-T.")
+            self.device_type = str(safe_get(data, 'device_type', 'tokamak')).lower()
+            if self.device_type not in ['tokamak', 'stellarator']:
+                raise ValueError("device_type must be 'tokamak' or 'stellarator'")
             self.impurityfractions = np.array(data['impurityfractions'], dtype=np.float64)
             if 'Zeff_target' in data and 'impurity' in data:
                 impurity = int(data['impurity'])
@@ -1027,7 +1029,6 @@ class POPCON_settings:
             self.M_i = f_D * 2.014 + f_T * 3.016 + np.dot(self.impurityfractions, np.array([4.002, 20.18, 39.948, 83.80, 131.29, 183.84]))
 
             self.scalinglaw = str(data['scalinglaw'])
-            self.is_stellarator = bool(safe_get(data, 'is_stellarator', False))
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
 
@@ -1253,7 +1254,12 @@ class POPCON:
 
         self.algorithms._setup_profs()
         scalinglaw = self.settings.scalinglaw
-        self.algorithms.is_stellarator = self.settings.is_stellarator
+        if self.settings.device_type == "stellarator":
+            self.algorithms.device_type = 1
+        elif self.settings.device_type == "tokamak":
+            self.algorithms.device_type = 0
+        else:
+            raise ValueError(f"Invalid device_type: {self.settings.device_type}")
         slparam = self.scalinglaws[scalinglaw]
         self.algorithms.H_fac = self.settings.H_fac
         self.algorithms.scaling_const = slparam['scaling_const']
@@ -1718,16 +1724,19 @@ betaN = {betaN:.3f}
             data = yaml.safe_load(open(scalinglawfile, 'r'))
         else:
             raise ValueError('Filename must end with .yaml or .yml')
-        assert 'H89' in data.keys()
-        assert 'H98y2' in data.keys()
-        assert 'H_NT23' in data.keys()
-        assert 'ISSO_fake' in data.keys()
         
-        device_str = data.get("device_type", "tokamak").lower()
-        self.device_type = device_str
-        self.device = 0 if device_str == "tokamak" else 1
-        self.is_tokamak = self.device == 0
+        device_type = getattr(self.settings, 'device_type', 'tokamak').lower()
+        
+        if device_type == "tokamak":
+            assert 'H89' in data.keys()
+            assert 'H98y2' in data.keys()
+            assert 'H_NT23' in data.keys()
+        elif device_type == "stellarator":
+            assert 'ISSO' in data.keys()
+        else:
+            raise ValueError(f"Unknown device_type '{device_type}', must be 'tokamak' or 'stellarator'")
         self.scalinglaws = data
+    
 
     def __setup_params(self) -> None:
 
@@ -1746,6 +1755,7 @@ betaN = {betaN:.3f}
         self.algorithms.impurityfractions = self.settings.impurityfractions
         self.algorithms.verbosity = self.settings.verbosity
         self.algorithms.resistivity_alg = res_dict[self.settings.resistivity_model.lower()]
+        self.algorithms.device_type = 1 if self.settings.device_type == "stellarator" else 0
 
     def __get_profiles(self) -> None:
         if self.settings.profsfilename == '':
