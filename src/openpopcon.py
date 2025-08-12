@@ -1766,7 +1766,7 @@ betaN = {betaN:.3f}
 
     def __get_geometry(self) -> None:
         if self.settings.gfilename == '':
-            rho = np.sqrt(np.linspace(0.001,1,self.settings.nr))
+            rho = np.linspace(0.001,1,self.settings.nr)
             if self.settings.j_offset == 0:
                 self.settings.j_offset = 1e-6
             self.algorithms._addextprof(rho,-2)
@@ -1776,7 +1776,7 @@ betaN = {betaN:.3f}
         else:
             gfile = read_eqdsk(self.settings.gfilename)
             psin, volgrid, agrid, fs = get_fluxvolumes(gfile, self.settings.nr)
-            sqrtpsin = np.sqrt(np.linspace(0.001,0.98,self.settings.nr))
+            sqrtpsin = np.linspace(0.001,0.98,self.settings.nr)
             volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
             _, jrms, jtoravg, cross_sec_areas = get_current_density(gfile, self.settings.nr)
             qpsi = np.asarray(gfile['qpsi'])
