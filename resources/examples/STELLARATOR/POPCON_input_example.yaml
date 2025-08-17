@@ -1,0 +1,104 @@
+# OpenPOPCON input file
+#-----------------------------------------------------------------------
+# Machine Paramters
+#-----------------------------------------------------------------------
+
+name: "STELLARATOR"
+
+R: 1.85 # major radius in meters
+a: 0.57 # minor radius in meters
+kappa: 1.97 # elongation
+delta: 0.54 # triangularity
+
+#----------------------
+# I_P and q* can be calculated from each other. Pick one to specify:
+I_P: 8.7 # plasma current in MA
+# or
+# qstar: 2.5
+#----------------------
+
+#----------------------
+# B_0 and B_coil can be calculated from each other. Pick one to specify:
+B_0: 24 # on-axis magnetic field in Tesla
+# or
+# B_coil: 24.0 # magnetic field at the coil in Tesla
+# wall_thickness: 1.1 # wall thickness between magnet and separatrix in meters
+#----------------------
+
+#----------------------
+tipeak_over_tepeak: 0.9894 # ratio of ion to electron temperature at peak
+fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
+#----------------------
+
+#----------------------
+# Impurity Fractions
+# In order, the fractions of:
+# 0 He ash
+# 1 Ne
+# 2 Ar
+# 3 Kr
+# 4 Xe
+# 5 W
+# Impfracs and Z_eff can be calculated from each other. If you specify
+# Z_eff, the impurity fraction for the specified impurity will be overwritten.
+impurityfractions: [0.025, 0., 0., 0., 0., 0.]
+Zeff_target: 1.5 # average effective charge of plasma
+impurity: 2 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
+#----------------------
+
+#----------------------
+scalinglaw: "ISSO" # Name of tau_E scaling law as defined in scaling_laws.yaml
+device_type: stellarator #tokamak or stellarator 
+iota_23: 1 #stellarator scaling law constant
+
+
+H_fac: 1. # Factor by which to multiply the scaling law
+#----------------------
+
+#----------------------
+# Profiles
+# If you specify a filename, the profiles will be read from that file and normalized.
+# Otherwise, the normalized profiles will be parabolic of the form
+# f(r) = (1 - offset)*(1 - r**alpha1)**alpha2 + offset
+# j profile comes from the equilibrium, the others come from the profs file.
+gfilename: ""
+profsfilename: ""
+
+j_alpha1: 2.
+j_alpha2: 3.
+j_offset: 0.01
+
+ne_alpha1: 2.5
+ne_alpha2: 1.
+ne_offset: 0.4
+
+ni_alpha1: 2.5
+ni_alpha2: 1.
+ni_offset: 0.4
+
+Ti_alpha1: 2.
+Ti_alpha2: 3.5
+Ti_offset: 0.18
+
+Te_alpha1: 2.
+Te_alpha2: 3.5
+Te_offset: 0.18
+#----------------------
+
+
+#----------------------
+# Algorithm settings
+#----------------------
+Nn: 50 # resolution of densities
+NTi: 50 # resolution of ion temperatures
+nr: 100 # number of radial grid points
+nmax_frac: 1. # maximum electron density as a fraction of the Greenwald density
+nmin_frac: 0.05 # minimum electron density as a fraction of the Greenwald density
+Tmax_keV: 16. # maximum volume-averaged temperature in keV
+Tmin_keV: 3. # minimum volume-averaged temperature in keV
+resistivity_model: "Jardin" # Jardin, Paz-Soldan or maximum (suggested: Jardin)
+maxit: 1000000 # maximum number of iterations
+accel: 1.5 # acceleration factor
+err: 1e-6 # error tolerance
+verbosity: 1 # 0 for no output, 1 for minimal output, 2 for verbose output
+parallel: True
