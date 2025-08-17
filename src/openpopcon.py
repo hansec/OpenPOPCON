@@ -27,10 +27,15 @@ from .lib import phys_lib as phys
 import shutil
 import datetime
 from .lib import neat_json_encoder as nj
+import os
+from netCDF4 import Dataset
+
+
 
 DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml'])
 DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
 
+    
 # core of calculations
 # jit compiled
 @nb.experimental.jitclass(spec = [
@@ -259,6 +264,7 @@ class POPCON_algorithms:
         self.Pheat_alpha: float = -0.69                         # Power degradation scaling law exponent
         self.n20_alpha: float = 0.41                            # Greenwald density scaling law exponent
         self.iota_alpha: float = 0.41                           # Iota scaling law exponent (stellarator only)
+        self.iota_23: float = 1.0                               # Iota sclaing law at rho = 2/3 (stellarator only)
         
         #---------------------------------------------------------------
         # Etc
@@ -1037,11 +1043,13 @@ class POPCON_settings:
             self.nr = int(data['nr'])
 
             self.gfilename = str(safe_get(data,'gfilename',''))
+            self.vmecfilename = str(safe_get(data,'vmecfilename',''))
             self.profsfilename = str(safe_get(data,'profsfilename',''))
 
             self.j_alpha1 = float(safe_get(data,'j_alpha1',1))
             self.j_alpha2 = float(safe_get(data,'j_alpha2',2))
             self.j_offset = float(safe_get(data,'j_offset',0))
+            self.iota_23 = iota_at_rho(self.vmecfilename, rho_target=2.0/3.0)
 
             self.ne_alpha1 = float(safe_get(data,'ne_alpha1',2))
             self.ne_alpha2 = float(safe_get(data,'ne_alpha2',1.5))
@@ -1271,6 +1279,7 @@ class POPCON:
         self.algorithms.Ip_alpha = slparam.get('Ip_alpha',0.0)
         self.algorithms.kappa_alpha = slparam.get('kappa_alpha', 0.0)
         self.algorithms.iota_alpha = slparam.get('iota_alpha', 0.0)
+        self.algorithms.iota_23 = slparam.get('iota_23', 0.0)
         self.algorithms.R_alpha = slparam['R_alpha']
         self.algorithms.a_alpha = slparam['a_alpha']
         self.algorithms.B0_alpha = slparam['B0_alpha']
@@ -1679,6 +1688,12 @@ betaN = {betaN:.3f}
         if self.settings.profsfilename != '':
             shutil.copyfile(self.settings.profsfilename, savedir.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
 
+        if self.settings.vmecfilename != '':
+            shutil.copyfile(self.settings.vmecfilename, savedir.joinpath(self.settings.vmecfilename.split(str(os.sep))[-1]))
+        if self.settings.profsfilename != '':
+            shutil.copyfile(self.settings.profsfilename, savedir.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
+
+
         self.plot(show=False, savefig=str(savedir.joinpath('POPCON_plot.pdf')))
         plt.close('all')
 
@@ -1715,6 +1730,8 @@ betaN = {betaN:.3f}
                 setattr(self.output, key, np.array(data[key], dtype=np.float64))
         if self.settings.gfilename != '':
             self.settings.gfilename = str(namepath.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
+        if self.settings.vmecfilename != '':
+            self.settings.vmecfilename = str(namepath.joinpath(self.settings.vmecfilename.split(str(os.sep))[-1])) 
         if self.settings.profsfilename != '':
             self.settings.profsfilename = str(namepath.joinpath(self.settings.profsfilename.split(str(os.sep))[-1]))
         self.run_POPCON(setuponly=True)
@@ -1750,6 +1767,7 @@ betaN = {betaN:.3f}
         self.algorithms = POPCON_algorithms()
         self.algorithms.R = self.settings.R
         self.algorithms.a = self.settings.a
+        self.algorithms.iota_23 = self.settings.iota_23
         self.algorithms.kappa = self.settings.kappa
         self.algorithms.delta = self.settings.delta
         self.algorithms.B0 = self.settings.B0
@@ -1762,6 +1780,21 @@ betaN = {betaN:.3f}
         self.algorithms.resistivity_alg = res_dict[self.settings.resistivity_model.lower()]
         self.algorithms.device_type = 1 if self.settings.device_type == "stellarator" else 0
 
+        
+        if self.settings.device_type == "stellarator":
+            iota_input = self.settings.iota_23
+            if isinstance(iota_input, str) and iota_input.endswith('.nc'):
+                try:
+                    self.algorithms.iota_23 = extract_iota23_from_vmec(iota_input)
+                    if self.settings.verbosity > 0:
+                        print(f"Extracted iota_23 = {self.algorithms.iota_23:.5f} from VMEC file: {iota_input}")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to extract iota_23 from {iota_input}: {e}")
+            elif isinstance(iota_input, (int, float)):
+                self.algorithms.iota_23 = float(iota_input)
+            else:
+                raise ValueError(f"Invalid iota_23 input: {iota_input}")
+        
     def __get_profiles(self) -> None:
         if self.settings.profsfilename == '':
             if self.settings.ne_offset == 0:
@@ -1800,6 +1833,14 @@ betaN = {betaN:.3f}
         pass
 
     def __get_geometry(self) -> None:
+
+        # Safeguard: prevent stellarators from using gfile input
+        if self.settings.device_type == "stellarator" and self.settings.gfilename != '':
+            raise ValueError(
+                "For stellarators, do not provide 'gfilename'. Instead, specify a VMEC file "
+                "in the 'iota_23' field of your input.yaml."
+        )
+
         if self.settings.gfilename == '':
             rho = np.sqrt(np.linspace(0.001,1,self.settings.nr))
             if self.settings.j_offset == 0:
@@ -1809,6 +1850,7 @@ betaN = {betaN:.3f}
             self.algorithms.Itot = self.settings.Ip
             
         else:
+            iota_23 = iota_at_rho(self.settings.vmecfilename, rho_target=2.0/3.0)
             gfile = read_eqdsk(self.settings.gfilename)
             psin, volgrid, agrid, fs = get_fluxvolumes(gfile, self.settings.nr)
             sqrtpsin = np.sqrt(np.linspace(0.001,0.98,self.settings.nr))
@@ -1817,7 +1859,6 @@ betaN = {betaN:.3f}
             qpsi = np.asarray(gfile['qpsi'])
             psiq = np.linspace(0,1,qpsi.shape[0])
             qr = np.interp(sqrtpsin,np.sqrt(psiq),qpsi)
-
 
 
             Ipint = np.abs(np.trapz(y=jtoravg, x=cross_sec_areas))
