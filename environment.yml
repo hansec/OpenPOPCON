@@ -9,3 +9,6 @@ dependencies:
 - matplotlib
 - numba
 - pyyaml
+- netcdf4  # For VMEC file reading
+pip:
+  # No longer need t3d dependency - VMEC reading capability integrated directly

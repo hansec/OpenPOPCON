@@ -1,32 +1,57 @@
 H89:
   scaling_const: 0.048
-  M_i_alpha: 0.5
-  Ip_alpha: 0.85
   R_alpha: 1.2
   a_alpha: 0.3
-  kappa_alpha: 0.5
   B0_alpha: 0.2
   Pheat_alpha: -0.5
   n20_alpha: 0.1
+  # tokamak constants
+  M_i_alpha: 0.5
+  Ip_alpha: 0.85
+  kappa_alpha: 0.5
+  # stellarator constants
+  iota_23_alpha: 0.0
 
 H98y2:
   scaling_const: 0.145
-  M_i_alpha: 0.19
-  Ip_alpha: 0.93
   R_alpha: 1.39
   a_alpha: 0.58
-  kappa_alpha: 0.78
   B0_alpha: 0.15
   Pheat_alpha: -0.69
   n20_alpha: 0.41
+  # tokamak constants
+  M_i_alpha: 0.19
+  Ip_alpha: 0.93
+  kappa_alpha: 0.78
+  # stellarator constants
+  iota_23_alpha: 0.0
 
 H_NT23:
   scaling_const: 0.2134
-  M_i_alpha: 0.19
-  Ip_alpha: 1.1
   R_alpha: 1.39
   a_alpha: 0.58
-  kappa_alpha: 0.78
   B0_alpha: 0.18
   Pheat_alpha: -0.89
   n20_alpha: 0.46
+  # tokamak constants
+  M_i_alpha: 0.19
+  Ip_alpha: 1.1
+  kappa_alpha: 0.78
+  # stellarator constants
+  iota_23_alpha: 0.0
+
+
+ISS04:
+  scaling_const: 0.148
+  R_alpha: 0.64
+  
+  a_alpha: 2.33
+  B0_alpha: 0.85
+  Pheat_alpha: -0.61
+  n20_alpha: 0.55
+  # tokamak constants
+  M_i_alpha: 0.0
+  Ip_alpha: 0.0
+  kappa_alpha: 0.0
+  # stellarator constants
+  iota_23_alpha: 0.41
