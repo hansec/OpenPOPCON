@@ -5,6 +5,8 @@
 
 name: "MANTA"
 
+device_type: "tokamak"
+
 R: 4.55 # major radius in meters
 a: 1.2 # minor radius in meters
 kappa: 1.4 # elongation

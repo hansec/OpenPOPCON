@@ -9,3 +9,4 @@ dependencies:
 - matplotlib
 - numba
 - pyyaml
+- netcdf4  # For VMEC file reading
