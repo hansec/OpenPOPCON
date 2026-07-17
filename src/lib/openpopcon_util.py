@@ -5,6 +5,7 @@ import os
 import pathlib
 import numba as nb
 import matplotlib.pyplot as plt
+from matplotlib.path import Path
 from scipy.interpolate import RectBivariateSpline as RBS
 
 def yaml_edit(filename, key, value) -> None:
@@ -101,9 +102,15 @@ def read_eqdsk(filename):
         
         eqdsk_obj['R'], eqdsk_obj['Z'] = np.meshgrid(R, Z)
 
-        eqdsk_obj['Bt_rz'] = eqdsk_obj['bcentr'] * eqdsk_obj['rcentr'] / eqdsk_obj['R']
+        # Toroidal field from B_t = F(psi)/R, which shows the dia/paramagnetism
+        # of the plasma. np.interp clamps outside the flux range, so this falls
+        # back to the vacuum field F_edge/R = bcentr*rcentr/R outside the LCFS.
+        psi1d = np.linspace(eqdsk_obj['psimag'], eqdsk_obj['psibry'], eqdsk_obj['nr'])
+        fluxorder = slice(None, None, 1 - 2*(eqdsk_obj['psimag'] > eqdsk_obj['psibry']))
+        fpolrz = np.interp(eqdsk_obj['psirz'], psi1d[fluxorder], eqdsk_obj['fpol'][fluxorder])
+        eqdsk_obj['Bt_rz'] = fpolrz / eqdsk_obj['R']
         
-        dpsidZ, dpsidR = np.gradient(eqdsk_obj['psirz'], R, Z)
+        dpsidZ, dpsidR = np.gradient(eqdsk_obj['psirz'], Z, R)
         eqdsk_obj['Br_rz'] = -dpsidZ / eqdsk_obj['R']
         eqdsk_obj['Bz_rz'] = dpsidR / eqdsk_obj['R']
 
@@ -122,41 +129,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     nres : int, optional
         Number of resolution points. The default is 300.
     """
-    rs = np.linspace(gEQDSK['rleft'],
-                        gEQDSK['rleft'] + gEQDSK['rdim'],
-                        gEQDSK['nr'])
-    zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
-                        gEQDSK['zmid'] + gEQDSK['zdim']/2,
-                        gEQDSK['nz'])
-    
-    # Get and normalize fluxes
-    fluxes = gEQDSK['psirz']-gEQDSK['psibry']
-    if fluxes[0,0] < 0:
-        fluxes = -fluxes
-    raxi = np.argmin(np.abs(rs - gEQDSK['raxis']))
-    zaxi = np.argmin(np.abs(zs - gEQDSK['zaxis']))
-
-    fluxes_axis = fluxes[zaxi, raxi]
-    fluxes += -fluxes_axis
-    fluxes /= np.abs(fluxes_axis)
-
-    cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
-    allsegs = []
-    psin = np.linspace(0.001, 1, Npsi)**2
-    for level in psin:
-        allsegs.append(cgen.create_contour(level))
-    
-    # Sometimes the flux surfaces have multiple paths including levels outside the plasma, filter these out
-    closed_fluxsurfaces = []
-    for psii, segset in enumerate(allsegs):
-        true = []
-        for i in range(len(segset)):
-            if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
-                true.append(i)
-        if len(true) == 0:
-            raise ValueError(f'No true path found for flux surface psi={psin[psii]}')
-        for truei in true:
-            closed_fluxsurfaces.append(segset[truei])
+    psin, closed_fluxsurfaces = get_contours(gEQDSK, Npsi)
 
     h = closed_fluxsurfaces[-1][:, 1].max() - \
             closed_fluxsurfaces[-1][:, 1].min()
@@ -210,101 +183,134 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
     return psin, Volgrid, Agrid, closed_fluxsurfaces
 
 def get_trapped_particle_fraction(gEQDSK: dict, Npsi: int=50):
+    """
+    Trapped particle fraction on each flux surface.
+
+    Lin-Liu and Miller [9] gives analytic lower and upper
+    bounds ft_lower <= ft <= ft_upper, and recommend the blend
+    ft = 0.75*ft_upper + 0.25*ft_lower as the best cheap approximation to the
+    exact value. That blend is returned here.
+    """
     psin, closed_fluxsurfaces = get_contours(gEQDSK, Npsi)
-    # closed_fluxsurfaces[5]
-    Bt = gEQDSK['Bt_rz']
-    Br = gEQDSK['Br_rz']
-    Bz = gEQDSK['Bz_rz']
 
-    Bt_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bt.T)
-    Br_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Br.T)
-    Bz_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], Bz.T)
+    Bt_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], gEQDSK['Bt_rz'].T)
+    Br_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], gEQDSK['Br_rz'].T)
+    Bz_interp = RBS(gEQDSK['R'][0,:], gEQDSK['Z'][:,0], gEQDSK['Bz_rz'].T)
 
-    B2avg = np.zeros(len(psin))
-    Bm2avg = np.zeros(len(psin))
-    funcavg = np.zeros(len(psin))
+    ft_lower = np.zeros(len(psin))
+    ft_upper = np.zeros(len(psin))
 
     for i, psi in enumerate(psin):
         contour = closed_fluxsurfaces[i]
-        R = contour[:,0]
-        Z = contour[:,1]
-        Bt = Bt_interp(R, Z, grid=False)
-        Br = Br_interp(R, Z, grid=False)
-        Bz = Bz_interp(R, Z, grid=False)
-        B2 = Bt**2 + Br**2 + Bz**2
-        Bm2 = 1/(Bt**2 + Br**2 + Bz**2)
+        ri = contour[:,0]
+        zi = contour[:,1]
+        rmid = 0.5*(ri[1:]+ri[:-1])
+        zmid = 0.5*(zi[1:]+zi[:-1])
+        lengths = np.sqrt(np.diff(ri)**2 + np.diff(zi)**2)
+
+        Bt = Bt_interp(rmid, zmid, grid=False)
+        Br = Br_interp(rmid, zmid, grid=False)
+        Bz = Bz_interp(rmid, zmid, grid=False)
+        Bp2 = Br**2 + Bz**2
+        B2 = Bt**2 + Bp2
         B = np.sqrt(B2)
-        Bc = np.max(B)
-        func = np.sqrt(1-B/Bc) - (1/3) * (1-B/Bc)**(3/2)
-        func *= Bm2
+        Bmax = np.max(B)
+        b = B/Bmax
 
-        B2avg[i] = np.mean(B2)
-        Bm2avg[i] = np.mean(Bm2)
-        funcavg[i] = np.mean(func)
 
-    f = 1 - B2avg * Bm2avg + (3/2) * B2avg * funcavg
+        Bpol = np.sqrt(Bp2)
+        Bpol = np.maximum(Bpol, 1e-6*np.max(Bpol))
+        weights = lengths/Bpol
+        totalweight = np.sum(weights)
+        avg = lambda x: np.sum(weights*x)/totalweight
+
+        h = avg(B)/Bmax
+        h2 = avg(B2)/Bmax**2
+        # Lin-Liu & Miller eq. 4 (upper bound) and eq. 7 (lower bound)
+        ft_upper[i] = 1 - h2/h**2 * (1 - np.sqrt(1-h)*(1 + 0.5*h))
+        ft_lower[i] = 1 - h2 * avg((1 - np.sqrt(1-b)*(1 + b/2))/b**2)
+
+    # Lin-Liu & Miller eqs. 18-19
+    f = 0.75*ft_upper + 0.25*ft_lower
 
     return psin, f
 
+def _polygon_area(contour):
+    r = contour[:, 0]
+    z = contour[:, 1]
+    return np.abs(np.sum(r[:-1]*z[1:] - r[1:]*z[:-1])/2)
+
 def get_contours(gEQDSK: dict, Npsi: int=50):
+    """
+    Traces the closed flux surface enclosing the magnetic axis at each of
+    Npsi normalized flux levels. Returns exactly one contour per level, so
+    that closed_fluxsurfaces[i] always corresponds to psin[i].
+    """
     rs = np.linspace(gEQDSK['rleft'],
                         gEQDSK['rleft'] + gEQDSK['rdim'],
-                        gEQDSK['nr'])
+                        gEQDSK['psirz'].shape[1])
     zs = np.linspace(gEQDSK['zmid'] - gEQDSK['zdim']/2,
                         gEQDSK['zmid'] + gEQDSK['zdim']/2,
-                        gEQDSK['nz'])
-    # Get and normalize fluxes
-    fluxes = gEQDSK['psirz']-gEQDSK['psibry']
-    if fluxes[0,0] < 0:
-        fluxes = -fluxes
+                        gEQDSK['psirz'].shape[0])
     raxi = np.argmin(np.abs(rs - gEQDSK['raxis']))
     zaxi = np.argmin(np.abs(zs - gEQDSK['zaxis']))
-
-    fluxes_axis = fluxes[zaxi, raxi]
-    fluxes += -fluxes_axis
-    fluxes /= np.abs(fluxes_axis)
+    psi_axis = gEQDSK['psirz'][zaxi, raxi]
+    fluxes = (gEQDSK['psirz'] - psi_axis)/(gEQDSK['psibry'] - psi_axis)
 
     cgen = cntr.contour_generator(x=rs, y=zs, z=fluxes)
-    allsegs = []
     psin = np.linspace(0.001, 1, Npsi)**2
-    for level in psin:
-        allsegs.append(cgen.create_contour(level))
-    # Filter out stuff below the divertor
-    closed_fluxsurfaces = []
-    for psii, segset in enumerate(allsegs):
-        true = []
-        for i in range(len(segset)):
-            if np.abs(np.sqrt((np.average(segset[i][:, 1])-gEQDSK['zaxis'])**2 + (np.average(segset[i][:, 0])-gEQDSK['raxis'])**2)) < gEQDSK['zdim']/5:
-                true.append(i)
-        if len(true) == 0:
-            raise ValueError('No true path found')
-        for truei in true:
-            closed_fluxsurfaces.append(segset[truei])
+    axis_point = (gEQDSK['raxis'], gEQDSK['zaxis'])
 
-    
+    closed_fluxsurfaces = []
+    for level in psin:
+        segset = [seg for seg in cgen.create_contour(level) if len(seg) > 2]
+        if len(segset) == 0:
+            raise ValueError(f'No flux surface contour found at psin={level}')
+        enclosing = [seg for seg in segset if Path(seg).contains_point(axis_point)]
+        if len(enclosing) != 0:
+            chosen = min(enclosing, key=_polygon_area)
+        else:
+            chosen = min(segset, key=lambda seg: np.hypot(np.mean(seg[:, 0])-axis_point[0],
+                                                          np.mean(seg[:, 1])-axis_point[1]))
+        closed_fluxsurfaces.append(chosen)
+
     return psin, closed_fluxsurfaces
 
 def get_current_density(gEQDSK: dict, Npsi: int=50):
-    zs = np.linspace(gEQDSK['zmid']-0.5*gEQDSK['zdim'], gEQDSK['zmid']+0.5*gEQDSK['zdim'], gEQDSK['psirz'].shape[1])
-    rs = np.linspace(gEQDSK['rleft'], gEQDSK['rleft']+gEQDSK['rdim'], gEQDSK['psirz'].shape[0])
+    """
+    Flux surface averaged current densities from a gEQDSK, in A/m^2.
+    """
+    mu0 = 4e-7*np.pi
+    # psirz has shape (nz, nr): axis 0 is Z, axis 1 is R
+    nz, nr = np.shape(gEQDSK['psirz'])
+    zs = np.linspace(gEQDSK['zmid']-0.5*gEQDSK['zdim'], gEQDSK['zmid']+0.5*gEQDSK['zdim'], nz)
+    rs = np.linspace(gEQDSK['rleft'], gEQDSK['rleft']+gEQDSK['rdim'], nr)
     psirz = gEQDSK['psirz']
+    RR, _ = np.meshgrid(rs, zs)
 
     psin, volgrid, agrid, fs = get_fluxvolumes(gEQDSK, Npsi)
-    sqrtpsin = np.sqrt(psin)
-    volgrid = np.interp(sqrtpsin,np.sqrt(psin),volgrid)
 
     ffp = np.asarray(gEQDSK['ffprim'])
     psi = np.linspace(gEQDSK['psimag'],gEQDSK['psibry'],np.shape(ffp)[0])
     reverse = gEQDSK['psimag'] > gEQDSK['psibry']
-    fprimrz = np.interp(psirz, psi[::1-2*reverse], np.gradient(gEQDSK['fpol'][::1-2*reverse], psi[::1-2*reverse]))
-    ffprz = np.interp(psirz, psi[::1-2*reverse], gEQDSK['ffprim'][::1-2*reverse])
-    pprz = np.interp(psirz, psi[::1-2*reverse], gEQDSK['pprime'][::1-2*reverse])
-    jpolrz = 1/rs*fprimrz*np.gradient(psirz, rs,zs)
-    gradstarpsi = -(4e-7*np.pi)*rs**2*pprz - 0.5*ffprz
-    jtorrz = 1/rs * gradstarpsi
-    jtot = np.sqrt(jpolrz[0]**2 + jpolrz[1]**2 + jtorrz**2)
+    fluxorder = slice(None, None, 1-2*reverse)
+    fprimrz = np.interp(psirz, psi[fluxorder], np.gradient(gEQDSK['fpol'][fluxorder], psi[fluxorder]))
+    ffprz = np.interp(psirz, psi[fluxorder], gEQDSK['ffprim'][fluxorder])
+    pprz = np.interp(psirz, psi[fluxorder], gEQDSK['pprime'][fluxorder])
+
+    dpsidZ, dpsidR = np.gradient(psirz, zs, rs)
+    B_pol = np.sqrt(dpsidR**2 + dpsidZ**2)/RR
+
+    # mu0*J_pol = F'(psi)*B_pol
+    jpolrz = fprimrz*B_pol/mu0
+    # Grad-Shafranov, Delta*psi = -mu0*R^2*p' - FF', combined with
+    # Delta*psi = -mu0*R*J_tor
+    jtorrz = -(RR*pprz + ffprz/(mu0*RR))
+
+    jtot = np.sqrt(jpolrz**2 + jtorrz**2)
     jtotspline = RBS(zs, rs, jtot)
     jtorspline = RBS(zs, rs, jtorrz)
+    Bpolspline = RBS(zs, rs, B_pol)
 
     jtoravg = np.zeros_like(psin)
     javgrms = np.zeros_like(psin)
@@ -316,10 +322,13 @@ def get_current_density(gEQDSK: dict, Npsi: int=50):
         rmid = 0.5*(ri[1:]+ri[:-1])
         zmid = 0.5*(zi[1:]+zi[:-1])
         lengths = np.sqrt(np.diff(ri)**2 + np.diff(zi)**2)
-        totallength = np.sum(lengths)
+        Bpol_c = np.abs(Bpolspline.ev(zmid, rmid))
+        Bpol_c = np.maximum(Bpol_c, 1e-6*np.max(Bpol_c))
+        weights = lengths/Bpol_c
+        totalweight = np.sum(weights)
         # Root mean square of the current density since OH Power is ~ J^2
-        javgrms[i] = np.sqrt(np.sum(np.abs(jtotspline.ev(zmid, rmid)**2*lengths))/totallength)
-        jtoravg[i] = np.sum(np.abs(jtorspline.ev(zmid, rmid)*lengths))/totallength
+        javgrms[i] = np.sqrt(np.sum(weights*jtotspline.ev(zmid, rmid)**2)/totalweight)
+        jtoravg[i] = np.sum(weights*jtorspline.ev(zmid, rmid))/totalweight
 
         dr = np.diff(ri)
         dz = np.diff(zi)

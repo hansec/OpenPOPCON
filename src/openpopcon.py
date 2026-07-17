@@ -1785,9 +1785,8 @@ betaN = {betaN:.3f}
 
 
 
-            Ipint = np.abs(np.trapz(y=jtoravg, x=cross_sec_areas))
+            Ipint = np.abs(np.trapz(y=jtoravg, x=cross_sec_areas))/1e6
             Jrmsint = np.abs(np.trapz(y=jrms, x=cross_sec_areas))
-            
             Jrms_norm = jrms/Jrmsint
 
 

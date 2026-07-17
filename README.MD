@@ -45,6 +45,9 @@ pc.plot()
 
 [8] C. Paz-Soldan, R. J. L. Haye, D. Shiraki, R. J. Buttery, N. W. Eidietis, E. M. Hollmann, R. A. Moyer, J. E. Boom, I. T. Chapman, and J. E. T. Contributors, The non-thermal origin of the tokamak low-density stability limit, Nucl. Fusion 56, 056010 (2016).
 
+[9] Y. R. Lin-Liu and R. L. Miller, Upper and lower bounds of the effective trapped particle fraction in general tokamak equilibria, Physics of Plasmas 2, 1666 (1995).
+
+
 
 
 ## Numerical strategy
