@@ -116,7 +116,7 @@ def read_eqdsk(filename):
 
     return eqdsk_obj
 
-def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
+def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50):
     """
     Calculates the flux surface volumes and areas from the gEQDSK object.
 
@@ -126,55 +126,18 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50, nres: int = 300):
         gEQDSK object.
     Npsi : int, optional
         Number of flux surfaces to calculate. The default is 50.
-    nres : int, optional
-        Number of resolution points. The default is 300.
     """
     psin, closed_fluxsurfaces = get_contours(gEQDSK, Npsi)
 
-    h = closed_fluxsurfaces[-1][:, 1].max() - \
-            closed_fluxsurfaces[-1][:, 1].min()
-    dh_target = h/nres
-
-    # Get flux surface volumes
-    hs = np.linspace(closed_fluxsurfaces[-1][:, 1].min()+dh_target,
-                        closed_fluxsurfaces[-1][:, 1].max()-dh_target, nres)
-    dh = hs[1] - hs[0]
     Volgrid = np.zeros(len(closed_fluxsurfaces))
     Agrid = np.zeros(len(closed_fluxsurfaces))
     for icontour, contour in enumerate(closed_fluxsurfaces):
-        xinners = np.zeros(nres)
-        xouters = np.zeros(nres)
-        for i in range(nres):
-            xs = np.zeros(2)
-            k = 0
-            # find the two intervals that cross the height hs[i]
-            for j in range(len(contour)-1):
-                if (hs[i] - contour[j][1])*(hs[i] - contour[j+1][1]) < 0:
-                    # interpolate to find the x value
-                    x = contour[j][0] + (hs[i] - contour[j][1])*(contour[j+1]
-                                                                    [0] - contour[j][0])/(contour[j+1][1] - contour[j][1])
-                    xs[k] = x
-                    k += 1
-            if k != 2:
-                # raise ValueError('No two x values found')
-                continue
-            xinner = min(xs)
-            xouter = max(xs)
-            xinners[i] = xinner
-            xouters[i] = xouter
-
-        # Trapezoidal sum, assuming small dr
-        V = 0
-        # Bottom cap
-        V += 0.5*np.pi*dh * (xouters[0]**2 - xinners[0]**2)
-        # Middle
-        for i in range(nres-1):
-            V += np.pi*dh * (xouters[i]**2 + 0.5*(xouters[i+1]**2 - xouters[i]**2)) - \
-                np.pi*dh * (xinners[i]**2 + 0.5 *
-                            (xinners[i+1]**2 - xinners[i]**2))
-        # Top cap
-        V += 0.5*np.pi*dh * (xouters[-1]**2 - xinners[-1]**2)
-        Volgrid[icontour] = V
+        r = contour[:, 0]
+        z = contour[:, 1]
+        # Volume of revolution about R=0.
+        # V = (pi/3) sum (r_i + r_{i+1})(r_i z_{i+1} - r_{i+1} z_i).
+        cross = r[:-1]*z[1:] - r[1:]*z[:-1]
+        Volgrid[icontour] = np.abs(np.pi/3 * np.sum((r[:-1] + r[1:])*cross))
         # Get the surface area of the flux surface
         d = np.diff(contour, axis=0)
         ds = np.sqrt(d[:, 0]**2 + d[:, 1]**2)
@@ -288,7 +251,7 @@ def get_current_density(gEQDSK: dict, Npsi: int=50):
     psirz = gEQDSK['psirz']
     RR, _ = np.meshgrid(rs, zs)
 
-    psin, volgrid, agrid, fs = get_fluxvolumes(gEQDSK, Npsi)
+    psin, fs = get_contours(gEQDSK, Npsi)
 
     ffp = np.asarray(gEQDSK['ffprim'])
     psi = np.linspace(gEQDSK['psimag'],gEQDSK['psibry'],np.shape(ffp)[0])
