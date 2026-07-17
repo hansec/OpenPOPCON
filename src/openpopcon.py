@@ -717,74 +717,43 @@ class POPCON_algorithms:
     # Power Balance Relaxation Solvers
     #-------------------------------------------------------------------
 
-    def P_aux_relax_impfrac(self, n_e_20, T_i_keV, accel=1., err=1e-5, max_iters=1000):
+    def P_aux_impfrac(self, n_e_20, T_i_keV):
         """
-        Relaxation solver for holding impfrac constant.
+        Closed-form power balance solver for the impurity-fraction-fixed mode.
         """
-        
-        P_aux_iter = 100. # Don't want to undershoot as we can end up with P~0 and this can create a NaN! So we choose a high starting point.
         T_e_keV = T_i_keV/self.tipeak_over_tepeak
         dil = self.plasma_dilution(T_e_keV)
         n_i_20 = n_e_20*dil
         line_average_fac = np.average(self.get_profile(self.sqrtpsin, 1))
-        dPaux: float
-        P_fusion_heating_iter = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, T_i_keV, n_i_20))
-        P_ohmic_heating_iter = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
-        W_tot_iter = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))
-        P_brem_iter = self.volume_integral(self.sqrtpsin, self._P_brem_rad(self.sqrtpsin, T_e_keV, n_e_20))
-        P_synch_iter = self.volume_integral(self.sqrtpsin, self._P_synch(self.sqrtpsin, T_e_keV, n_e_20))
-        P_imp_iter = self.volume_integral(self.sqrtpsin, self._P_impurity_rad(self.sqrtpsin, T_e_keV, n_e_20))
-        for ii in np.arange(max_iters):
-            # Power in
-            P_totalheating_iter = P_aux_iter + P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter - P_synch_iter
+        P_fusion_heating = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, T_i_keV, n_i_20))
+        P_ohmic_heating = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
+        W_tot = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))
+        P_brem = self.volume_integral(self.sqrtpsin, self._P_brem_rad(self.sqrtpsin, T_e_keV, n_e_20))
+        P_synch = self.volume_integral(self.sqrtpsin, self._P_synch(self.sqrtpsin, T_e_keV, n_e_20))
+        P_imp = self.volume_integral(self.sqrtpsin, self._P_impurity_rad(self.sqrtpsin, T_e_keV, n_e_20))
+        alpha = self.Pheat_alpha
+        K = self.tauE_scalinglaw(1.0, n_e_20*line_average_fac)
+        # Balance P_heat = W_tot / tauE = (W_tot/K) * P_heat^(-alpha)
+        P_heat = (W_tot/K)**(1.0/(1.0+alpha))
+        # P_heat = P_aux + P_OH + P_fusion_heating - P_brem - P_synch
+        P_aux = P_heat - P_ohmic_heating - P_fusion_heating + P_brem + P_synch
 
-            # Power out
-            tauE_iter = self.tauE_scalinglaw(P_totalheating_iter, n_e_20*line_average_fac)
-            P_confinement_loss_iter = W_tot_iter/tauE_iter
-
-            # Power balance
-            dPaux = P_confinement_loss_iter - P_totalheating_iter
-
-            # Relaxation
-
-            # Prevent negative aux power
-            if -dPaux*accel > P_aux_iter:
-                P_aux_iter -= 0.9*P_aux_iter
-            else:
-                P_aux_iter += accel*dPaux
-
-            # Prevent negative total heating power
-            if P_aux_iter < -(P_ohmic_heating_iter + P_fusion_heating_iter - P_brem_iter):
-                P_aux_iter = P_brem_iter
-
-            # Check for convergence
-            if P_aux_iter < 0.001 and dPaux <= 0:
-                break
-            elif P_aux_iter < 1.0:
-                if np.abs(dPaux/1.0) < err:
-                    break
-            else:
-                if np.abs(dPaux/P_aux_iter) < err:
-                    break
-            
-            if ii == max_iters-1:
-                if self.verbosity > 0:
-                    print(f"Power balance relaxation solver found",P_aux_iter,"but did not converge in {max_iters} iterations in state n20=", n_e_20, "T=" , T_i_keV , "keV.")
-        
-        # Warn for P_SOL < 0: This is when the impurity radiation power exceeds the total W_tot/tauE.
-        # Impurity power is assumed to displace what would otherwise be conductive, turbulent, or instability-driven losses.
-        # This means that it radiates power away that would otherwise cross the separatrix and strike the divertor.
-        if P_imp_iter > P_confinement_loss_iter:
+        # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
+        # balance equals P_heat. The impurity power is assumed to displace what
+        # would otherwise be conductive/turbulent/instability-driven loss, so it
+        # radiates power away that would otherwise cross the separatrix. Such a
+        # state is not physical; flag it.
+        if P_imp > P_heat:
             if self.verbosity > 0:
                 print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
-            P_aux_iter = 99999.
-        
-        if np.isnan(P_aux_iter):
-            if self.verbosity > 0:
-                print("NaN detected in P_aux_relax_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
-            P_aux_iter = 99999.
+            P_aux = 99999.
 
-        return P_aux_iter
+        if np.isnan(P_aux):
+            if self.verbosity > 0:
+                print("NaN detected in P_aux_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
+            P_aux = 99999.
+
+        return P_aux
     #-------------------------------------------------------------------
     # Setup functions
     #-------------------------------------------------------------------
@@ -1219,7 +1188,7 @@ class POPCON:
         self.__check_settings()
         compile_test = POPCON_algorithms()
         try:
-            compile_test.P_aux_relax_impfrac(1,1,1,1,1)
+            compile_test.P_aux_impfrac(1.0, 1.0)
         except:
             pass
 
@@ -1353,7 +1322,7 @@ class POPCON:
         n_i_20 = n_e_20*dil
         line_avg_fac = np.average(self.algorithms.get_profile(rho, 1))
 
-        Paux = self.algorithms.P_aux_relax_impfrac(n_e_20,T_i_keV,self.settings.accel,self.settings.err,self.settings.maxit)
+        Paux = self.algorithms.P_aux_impfrac(n_e_20,T_i_keV)
         
         Pfusion = self.algorithms.volume_integral(rho,self.algorithms._P_fusion(rho, T_i_keV, n_i_20))
         Pfusion_heating = self.algorithms.volume_integral(rho,self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20))
@@ -1888,11 +1857,7 @@ def solve_nT_par(params:POPCON_algorithms, nn:int, nT:int,
             if verbosity > 1:
                 print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
-            Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
-                                                    T_i_keV[j], 
-                                                    accel, 
-                                                    err,
-                                                    maxit)
+            Paux[i,j] = params.P_aux_impfrac(n_e_20[i], T_i_keV[j])
             
     return Paux
 
@@ -1913,11 +1878,7 @@ def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
             if verbosity > 1:
                 print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
-            Paux[i,j] = params.P_aux_relax_impfrac(n_e_20[i],
-                                                    T_i_keV[j], 
-                                                    accel, 
-                                                    err,
-                                                    maxit)
+            Paux[i,j] = params.P_aux_impfrac(n_e_20[i], T_i_keV[j])
             
     return Paux
 
@@ -1944,7 +1905,7 @@ def populate_outputs_par(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, 
             result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
             result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
             result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Prad[i,j] = result.Pbrems[i,j] + result.Pimprad[i,j] + result.Psynch[i,j]
             result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
             result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
             result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
@@ -1985,7 +1946,7 @@ def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verb
             result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
             result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
             result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Prad[i,j] = params.volume_integral(rho,params._P_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
+            result.Prad[i,j] = result.Pbrems[i,j] + result.Pimprad[i,j] + result.Psynch[i,j]
             result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
             result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
             result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
