@@ -24,6 +24,7 @@ import yaml
 import json
 import os
 import re
+import xarray as xr
 from .lib.openpopcon_util import *
 import numba as nb
 from collections import namedtuple
@@ -35,8 +36,13 @@ from .lib import neat_json_encoder as nj
 # resistivity_model in the settings file -> resistivity_alg on the State
 RESISTIVITY_MODELS = {"jardin": 0, "paz-soldan": 1, "maximum": 2, "max": 2}
 
-# why a grid point has no physical solution. P_aux is set to 99999 for all of
-# these; the flag survives so the reason can be reported
+__version__ = "2.0.0"
+
+# P_aux at a grid point with no physical solution. Plotting masks on this.
+UNPHYSICAL = 99999.
+
+# why a grid point has no physical solution. P_aux is set to UNPHYSICAL for all
+# of these; the flag survives so the reason can be reported
 INVALID_OK = 0
 INVALID_IMPRAD = 1
 INVALID_NAN = 2
@@ -70,8 +76,8 @@ DEPRECATED_SETTINGS_KEYS = {
     'err':   "the solver is closed-form and has no convergence tolerance",
 }
 
-DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml'])
-DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
+DEFAULT_PLOTSETTINGS = package_resource('default_plotsettings.yml')
+DEFAULT_SCALINGLAWS = package_resource('scalinglaws.yml')
 
 # core of calculations
 # jit compiled. Module level so cache=True works; jitclasses can't cache
@@ -1246,47 +1252,60 @@ COMPUTED_FIELDS = [
 ComputedOutputs = namedtuple('ComputedOutputs', COMPUTED_FIELDS)
 
 
-# NOT jit compiled
-class POPCON_data:
-    """
-    Class POPCON_data
+# Output is an xarray Dataset over these two dimensions. The seven 1-D arrays
+# are the different ways of labelling the two axes, so they are all coordinates;
+# everything else is 2-D. The dimensions are not called 'n'/'T' because Dataset.T
+# is transpose.
+DIM_N, DIM_T = 'n_index', 'T_index'
+AXES_N = ('n_G_frac', 'n_e_20_max', 'n_e_20_avg')
+AXES_T = ('T_i_max', 'T_i_avg', 'T_e_max', 'T_e_avg')
 
-    Output data class for the POPCON. Contains all output arrays.
+UNITS = {
+    'n_G_frac': '', 'n_e_20_max': '1e20 m^-3', 'n_e_20_avg': '1e20 m^-3',
+    'n_i_20_max': '1e20 m^-3', 'n_i_20_avg': '1e20 m^-3',
+    'T_i_max': 'keV', 'T_i_avg': 'keV', 'T_e_max': 'keV', 'T_e_avg': 'keV',
+    'Paux': 'MW', 'Pfusion': 'MW', 'Pfusionheating': 'MW', 'Pohmic': 'MW',
+    'Pbrems': 'MW', 'Psynch': 'MW', 'Pimprad': 'MW', 'Prad': 'MW',
+    'Pheat': 'MW', 'Pconf': 'MW', 'Ploss': 'MW', 'Pdd': 'MW', 'Pdt': 'MW',
+    'Palpha': 'MW', 'Psol': 'MW', 'Wtot': 'MJ', 'tauE': 's',
+    'f_rad': '', 'Q': '', 'H89': '', 'H98': '', 'vloop': 'V', 'betaN': '',
+}
+
+
+def build_dataset(grids: dict, settings=None, scalinglaws=None):
     """
-    def __init__(self) -> None:
-        self.n_G_frac: np.ndarray
-        self.n_e_20_max: np.ndarray
-        self.n_e_20_avg: np.ndarray
-        self.n_i_20_max: np.ndarray
-        self.n_i_20_avg: np.ndarray
-        self.T_i_max: np.ndarray
-        self.T_i_avg: np.ndarray
-        self.T_e_max: np.ndarray
-        self.T_e_avg: np.ndarray
-        self.Paux: np.ndarray
-        self.Pfusion: np.ndarray
-        self.Pfusionheating: np.ndarray
-        self.Pohmic: np.ndarray
-        self.Pbrems: np.ndarray
-        self.Psynch: np.ndarray
-        self.Pimprad: np.ndarray
-        self.Prad: np.ndarray
-        self.Pheat: np.ndarray
-        self.Wtot: np.ndarray
-        self.tauE: np.ndarray
-        self.Pconf: np.ndarray
-        self.Ploss: np.ndarray
-        self.Pdd: np.ndarray
-        self.Pdt: np.ndarray
-        self.Palpha: np.ndarray
-        self.Psol: np.ndarray
-        self.f_rad: np.ndarray
-        self.Q: np.ndarray
-        self.H89: np.ndarray
-        self.H98: np.ndarray
-        self.vloop: np.ndarray
-        self.betaN: np.ndarray
-        pass
+    Packs the solved arrays into an xarray Dataset. The 1-D axis arrays become
+    coordinates so that results can be selected against any of them, e.g.
+    ds.sel(T_index=ds.T_i_avg.searchsorted(10)); everything else is a 2-D
+    variable over (density, temperature).
+    """
+    coords = {}
+    for name in AXES_N:
+        coords[name] = (DIM_N, np.asarray(grids[name]))
+    for name in AXES_T:
+        coords[name] = (DIM_T, np.asarray(grids[name]))
+
+    data_vars = {name: ((DIM_N, DIM_T), np.asarray(arr))
+                 for name, arr in grids.items()
+                 if name not in AXES_N and name not in AXES_T}
+
+    ds = xr.Dataset(data_vars=data_vars, coords=coords)
+    for name, var in list(ds.variables.items()):
+        if name in UNITS and UNITS[name]:
+            var.attrs['units'] = UNITS[name]
+    ds['Paux'].attrs['note'] = (
+        f'{UNPHYSICAL} marks a point with no physical solution')
+
+    if settings is not None:
+        ds.attrs['machine'] = str(getattr(settings, 'name', ''))
+        ds.attrs['settings'] = json.dumps(
+            {k: (v.tolist() if isinstance(v, np.ndarray) else v)
+             for k, v in vars(settings).items()
+             if isinstance(v, (int, float, str, bool, np.ndarray))})
+    if scalinglaws is not None:
+        ds.attrs['scalinglaws'] = json.dumps(scalinglaws)
+    ds.attrs['openpopcon_version'] = __version__
+    return ds
 
 # NOT jit compiled
 class POPCON_plotsettings:
@@ -1319,7 +1338,8 @@ class POPCON_plotsettings:
         else:
             raise ValueError('Filename must end with .yaml or .yml')
         
-        defaults = yaml.safe_load(open(get_POPCON_homedir(['resources','default_plotsettings.yml']), 'r'))
+        with open(DEFAULT_PLOTSETTINGS, 'r') as f:
+            defaults = yaml.safe_load(f)
 
         self.plotoptions = {}
         for key in defaults['plotoptions']:
@@ -1347,7 +1367,7 @@ class POPCON:
         self.algorithms: POPCON_algorithms
         self.settings: POPCON_settings
         self.plotsettings: POPCON_plotsettings
-        self.output: POPCON_data
+        self.output: xr.Dataset
 
         # these are kept as absolute paths so that write_output can still copy
         # them if the working directory has changed since construction
@@ -1424,38 +1444,39 @@ class POPCON:
         T_i_keV = np.linspace(self.settings.Tmin_keV/T_i_avg_fac, self.settings.Tmax_keV/T_i_avg_fac, self.settings.NTi)
         T_e_keV = T_i_keV/self.settings.tipeak_over_tepeak
         
-        self.output = POPCON_data()
-        self.output.n_G_frac = np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn)
-        self.output.n_e_20_max = n_e_20
-        self.output.n_e_20_avg = n_e_20 * n_e_avg_fac
-        self.output.T_i_max = T_i_keV
-        self.output.T_i_avg = T_i_keV * T_i_avg_fac
-        self.output.T_e_max = T_e_keV
-        self.output.T_e_avg = T_e_keV * T_e_avg_fac
-        
+        axes = {
+            'n_G_frac': np.linspace(self.settings.nmin_frac, self.settings.nmax_frac, self.settings.Nn),
+            'n_e_20_max': n_e_20,
+            'n_e_20_avg': n_e_20 * n_e_avg_fac,
+            'T_i_max': T_i_keV,
+            'T_i_avg': T_i_keV * T_i_avg_fac,
+            'T_e_max': T_e_keV,
+            'T_e_avg': T_e_keV * T_e_avg_fac,
+        }
+
         if self.settings.verbosity > 0:
             print("Solving power balance equations")
 
         if self.settings.parallel:
             Paux, flags = solve_nT_par(params.state, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.verbosity)
+                                    n_e_20, T_i_keV)
         else:
             Paux, flags = solve_nT(params.state, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.verbosity)
+                                    n_e_20, T_i_keV)
 
 
         if self.settings.verbosity > 0:
             print("Power balance solutions found. Populating output arrays.")
             self.__report_invalid(flags)
-        self.output.Paux = Paux
         if self.settings.parallel:
             computed = populate_outputs_par(params.state, n_e_20, T_i_keV, T_e_keV, Paux,
-                                            self.settings.Nn, self.settings.NTi, self.settings.verbosity)
+                                            self.settings.Nn, self.settings.NTi)
         else:
             computed = populate_outputs(params.state, n_e_20, T_i_keV, T_e_keV, Paux,
-                                        self.settings.Nn, self.settings.NTi, self.settings.verbosity)
-        for name in computed._fields:
-            setattr(self.output, name, getattr(computed, name))
+                                        self.settings.Nn, self.settings.NTi)
+
+        grids = dict(axes, Paux=Paux, **computed._asdict())
+        self.output = build_dataset(grids, self.settings, self.scalinglaws)
 
         pass
 
@@ -1775,7 +1796,7 @@ betaN = {betaN:.3f}
             name = re.sub(r'[^A-Za-z0-9._-]+', '_', self.settings.name) + '_' + stamp
 
         if directory is None:
-            outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+            outputsdir = pathlib.Path.cwd().joinpath('OpenPOPCON_outputs')
         else:
             outputsdir = pathlib.Path(directory)
 
@@ -1798,13 +1819,7 @@ betaN = {betaN:.3f}
         shutil.copyfile(self.plotsettingsfile, savedir.joinpath('plotsettings.yaml'))
         shutil.copyfile(self.scalinglawfile, savedir.joinpath('scalinglaws.yaml'))
         
-        writedata = {}
-        keys = POPCON_data_spec
-        for key in keys:
-            writedata[key[0]] = getattr(self.output,key[0])
-        
-        with open(savedir.joinpath('arrays.json'), 'w') as f:
-            json.dump(writedata, f, cls=nj.CompactJSONEncoder)
+        self.output.to_netcdf(savedir.joinpath('arrays.nc'))
 
         if self.settings.gfilename != '':
             shutil.copyfile(self.settings.gfilename, savedir.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
@@ -1815,21 +1830,26 @@ betaN = {betaN:.3f}
         plt.close('all')
 
         if archive:
-            shutil.make_archive(name, 'zip', savedir)
+            written = outputsdir.joinpath(name + '.zip')
+            shutil.make_archive(str(outputsdir.joinpath(name)), 'zip', savedir)
             shutil.rmtree(savedir)
-            shutil.move(name+'.zip', outputsdir.joinpath(name+'.zip'))
+        else:
+            written = savedir
+
+        print(f"Wrote output to {written}")
+        return
 
     def read_output(self, name: str, directory: str = None) -> None:
         """
         Restores the POPCON object based on the output directory.
         """
         if directory is None:
-            outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
+            outputsdir = pathlib.Path.cwd().joinpath('OpenPOPCON_outputs')
         else:
             outputsdir = pathlib.Path(directory)
 
         if name.endswith('.zip'):
-            outputsdir.joinpath(name[:-4]).mkdir(parents=True)
+            outputsdir.joinpath(name[:-4]).mkdir(parents=True, exist_ok=True)
             shutil.unpack_archive(outputsdir.joinpath(name), outputsdir.joinpath(name[:-4]))
             name = name[:-4]
         namepath = outputsdir.joinpath(name)
@@ -1840,11 +1860,18 @@ betaN = {betaN:.3f}
         self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
         self.__get_scaling_laws(self.scalinglawfile)
         
-        self.output = POPCON_data()
-        with open(namepath.joinpath('arrays.json'), 'r') as f:
-            data = json.load(f)
-            for key in data.keys():
-                setattr(self.output, key, np.array(data[key], dtype=np.float64))
+        ncpath = namepath.joinpath('arrays.nc')
+        jsonpath = namepath.joinpath('arrays.json')
+        if ncpath.is_file():
+            self.output = xr.load_dataset(ncpath)
+        elif jsonpath.is_file():
+            # archives written before the netCDF switch
+            with open(jsonpath, 'r') as f:
+                data = json.load(f)
+            self.output = build_dataset(
+                {k: np.array(v, dtype=np.float64) for k, v in data.items()})
+        else:
+            raise FileNotFoundError(f"No arrays.nc or arrays.json in {namepath}.")
         if self.settings.gfilename != '':
             self.settings.gfilename = str(namepath.joinpath(self.settings.gfilename.split(str(os.sep))[-1]))
         if self.settings.profsfilename != '':
@@ -2098,7 +2125,7 @@ betaN = {betaN:.3f}
 
 @nb.njit(parallel=True, cache=True)
 def solve_nT_par(state, nn:int, nT:int,
-                n_e_20:np.ndarray, T_i_keV:np.ndarray, verbosity=1):
+                n_e_20:np.ndarray, T_i_keV:np.ndarray):
     """
     Compiling the solver allows for parallelization, as each
     point in the grid can be solved independently.
@@ -2109,16 +2136,13 @@ def solve_nT_par(state, nn:int, nT:int,
 
     for i in nb.prange(nn):
         for j in nb.prange(nT):
-            if verbosity > 1:
-                print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
-
             Paux[i,j], flags[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
 
     return Paux, flags
 
 @nb.njit(parallel=False, cache=True)
 def solve_nT(state, nn:int, nT:int,
-                n_e_20:np.ndarray, T_i_keV:np.ndarray, verbosity=1):
+                n_e_20:np.ndarray, T_i_keV:np.ndarray):
     """
     Compiling the solver allows for parallelization, as each
     point in the grid can be solved independently.
@@ -2129,16 +2153,13 @@ def solve_nT(state, nn:int, nT:int,
 
     for i in nb.prange(nn):
         for j in nb.prange(nT):
-            if verbosity > 1:
-                print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
-
             Paux[i,j], flags[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
 
     return Paux, flags
 
 
 @nb.njit(parallel=True, cache=True)
-def populate_outputs_par(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, verbosity=1):
+def populate_outputs_par(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi):
     """
     Compiling this function is handy as it allows for 
     parallelization of the most computationally expensive
@@ -2172,8 +2193,6 @@ def populate_outputs_par(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, ver
     betaN = np.empty((Nn,NTi),dtype=np.float64)
     for i in nb.prange(Nn):
         for j in nb.prange(NTi):
-            if verbosity > 1:
-                print("Populating n20=",n_e_20_max[i],", T=",T_i_max[j]," keV")
             dil = plasma_dilution(state, T_e_max[j])
             n_i_20_max[i,j] = n_e_20_max[i]*dil
             n_i_20_avg[i,j] = n_i_20_max[i,j]*volume_integral(state, rho,get_profile(state, rho, 2))/state.V
@@ -2207,7 +2226,7 @@ def populate_outputs_par(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, ver
 
 
 @nb.njit(parallel=False, cache=True)
-def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, verbosity=1):
+def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi):
     """
     Compiling this function is handy as it allows for 
     parallelization of the most computationally expensive
@@ -2241,8 +2260,6 @@ def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, verbosi
     betaN = np.empty((Nn,NTi),dtype=np.float64)
     for i in nb.prange(Nn):
         for j in nb.prange(NTi):
-            if verbosity > 1:
-                print("Populating n20=",n_e_20_max[i],", T=",T_i_max[j]," keV")
             dil = plasma_dilution(state, T_e_max[j])
             n_i_20_max[i,j] = n_e_20_max[i]*dil
             n_i_20_avg[i,j] = n_i_20_max[i,j]*volume_integral(state, rho,get_profile(state, rho, 2))/state.V
@@ -2281,7 +2298,7 @@ class POPCON_scan(POPCON):
     Placeholder class for running scans. Inherits from POPCON.
     """
     def __init__(self) -> None:
-        self.datas: list[POPCON_data]
+        self.datas: list
         self.algorithms_list: list[POPCON_algorithms]
         self.settings: POPCON_settings
         self.plotsettings: list[POPCON_plotsettings]

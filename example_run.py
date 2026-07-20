@@ -1,26 +1,29 @@
 """
-Minimal OpenPOPCON run. From the repository root:
+Minimal OpenPOPCON run, using the MANTA example that ships with the package.
+From a clone of the repository:
 
     uv run example_run.py
 
-or, with the conda environment activated:
+or, once installed with pip, from anywhere:
 
     python example_run.py
 
-Copy resources/examples/MANTA/ somewhere and point settingsfile at your own
-copy to start changing the machine.
+To start changing the machine, get an editable copy of the examples with
+`openpopcon examples ./my_scans` and point settingsfile at one of those.
 """
+import os
+
 import matplotlib.pyplot as plt
 
-from src import openpopcon as op
+import openpopcon as op
 
-settingsfile = "./resources/examples/MANTA/POPCON_input_example.yaml"
-plotsettingsfile = "./resources/examples/MANTA/plotsettings.yml"
-scalinglawfile = "./resources/scalinglaws.yml"
+manta = op.example_dir('MANTA')
+settingsfile = os.path.join(manta, 'POPCON_input_example.yaml')
+plotsettingsfile = os.path.join(manta, 'plotsettings.yml')
 
+# scalinglawfile defaults to the copy shipped with the package
 pc = op.POPCON(settingsfile=settingsfile,
-               plotsettingsfile=plotsettingsfile,
-               scalinglawfile=scalinglawfile)
+               plotsettingsfile=plotsettingsfile)
 
 # solve power balance over the whole density/temperature grid
 pc.run_POPCON()

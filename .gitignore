@@ -1,8 +1,11 @@
 .conda
 .conda/*
-__*
+__pycache__/
 .vscode
-outputs/*
+OpenPOPCON_outputs/
 .venv
 POPCON.png
 single_point.png
+dist/
+build/
+*.egg-info/

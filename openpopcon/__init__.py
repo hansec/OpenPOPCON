@@ -19,9 +19,9 @@ from .core import (
     POPCON_scan,
     POPCON_settings,
     POPCON_plotsettings,
-    POPCON_data,
     POPCON_algorithms,
     POPCON_data_spec,
+    build_dataset,
 )
 from .lib.openpopcon_util import example_dir, list_examples
 
@@ -32,9 +32,9 @@ __all__ = [
     'POPCON_scan',
     'POPCON_settings',
     'POPCON_plotsettings',
-    'POPCON_data',
     'POPCON_algorithms',
     'POPCON_data_spec',
+    'build_dataset',
     'example_dir',
     'list_examples',
     '__version__',

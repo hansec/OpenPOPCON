@@ -1,6 +1,7 @@
 import numpy as np
 import contourpy as cntr
 import csv
+import importlib.resources
 import os
 import pathlib
 import numba as nb
@@ -23,8 +24,40 @@ def yaml_edit(filename, key, value) -> None:
     return
 
 
-def get_POPCON_homedir(path=[]):
-    return str(pathlib.Path(__file__).resolve().parent.parent.parent) + os.sep + str(os.sep).join(path)
+def package_resource(*parts) -> str:
+    """
+    Absolute path to a file shipped inside the package, e.g.
+    package_resource('scalinglaws.yml'). Returned as a str because callers
+    hand these to os.path.abspath and shutil.copyfile.
+    """
+    path = importlib.resources.files('openpopcon').joinpath('resources', *parts)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Packaged resource {os.sep.join(parts)!r} is missing from {path}. "
+            "This usually means the package was installed without its data files.")
+    return str(path)
+
+
+def list_examples() -> list:
+    """
+    Names of the worked examples shipped with the package.
+    """
+    exdir = importlib.resources.files('openpopcon').joinpath('resources', 'examples')
+    return sorted(p.name for p in exdir.iterdir() if p.is_dir())
+
+
+def example_dir(name: str) -> str:
+    """
+    Absolute path to a shipped example directory, e.g. example_dir('MANTA').
+
+    These are read-only once installed. Use `openpopcon examples <dir>` to get
+    an editable copy.
+    """
+    exdir = importlib.resources.files('openpopcon').joinpath('resources', 'examples', name)
+    if not exdir.is_dir():
+        raise FileNotFoundError(
+            f"No example named {name!r}. Available: {', '.join(list_examples())}.")
+    return str(exdir)
 
 def read_eqdsk(filename):
     ''' Taken from OpenFUSION toolkit. Perhaps do an import instead?

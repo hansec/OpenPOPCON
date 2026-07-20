@@ -20,7 +20,7 @@ def _copy_examples(dest: pathlib.Path, force: bool, which=None) -> int:
 
     existing = [n for n in names if dest.joinpath(n).exists()]
     if existing and not force:
-        print(f"{dest}{pathlib.os.sep}{{{','.join(existing)}}} already exists. "
+        print(f"Already present in {dest}: {', '.join(existing)}. "
               f"Use --force to overwrite.", file=sys.stderr)
         return 1
 

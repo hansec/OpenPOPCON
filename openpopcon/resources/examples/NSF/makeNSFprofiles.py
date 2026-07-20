@@ -1,6 +1,8 @@
 # Define profiles.csv from parameters alpha1, alpha2, such that
 # f = (f_center-f_edge)*(1-rho**alpha1)**alpha2 + f_edge
 
+import pathlib
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -32,4 +34,4 @@ if False:
 
 data = {'n_e':n_e,'n_i':n_i,'T_i':T_i,'T_e':T_e,'rho':rho}
 df = pd.DataFrame(data)
-df.to_csv("./resources/examples/NSF/pNSF.csv", index=False)
+df.to_csv(pathlib.Path(__file__).resolve().parent / "pNSF.csv", index=False)

@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-13T08:53:58.790952Z"
+exclude-newer = "2026-07-13T17:17:09.219247Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1535,8 +1535,10 @@ wheels = [
 [[package]]
 name = "openpopcon"
 version = "2.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "contourpy", version = "1.3.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "contourpy", version = "1.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numba" },
@@ -1555,6 +1557,7 @@ notebooks = [
 
 [package.metadata]
 requires-dist = [
+    { name = "contourpy" },
     { name = "jupyterlab", marker = "extra == 'notebooks'" },
     { name = "matplotlib" },
     { name = "numba" },
