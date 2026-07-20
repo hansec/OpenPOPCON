@@ -23,6 +23,7 @@ import matplotlib.patches as patches
 import yaml
 import json
 import os
+import re
 from .lib.openpopcon_util import *
 import numba as nb
 from collections import namedtuple
@@ -57,7 +58,16 @@ KNOWN_SETTINGS_KEYS = {
     'Ti_alpha1', 'Ti_alpha2', 'Ti_offset',
     'Te_alpha1', 'Te_alpha2', 'Te_offset',
     'Nn', 'NTi', 'nmax_frac', 'nmin_frac', 'Tmax_keV', 'Tmin_keV',
-    'resistivity_model', 'maxit', 'accel', 'err', 'verbosity', 'parallel',
+    'resistivity_model', 'verbosity', 'parallel',
+}
+
+# keys that used to do something. They are still accepted so that older
+# settings files keep working, but they are ignored, and saying so is more
+# useful than reporting them as typos
+DEPRECATED_SETTINGS_KEYS = {
+    'maxit': "the solver is closed-form and does not iterate",
+    'accel': "the solver is closed-form and does not iterate",
+    'err':   "the solver is closed-form and has no convergence tolerance",
 }
 
 DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml'])
@@ -1183,9 +1193,6 @@ class POPCON_settings:
             self.Tmax_keV = float(data['Tmax_keV'])
             self.Tmin_keV = float(data['Tmin_keV'])
             self.resistivity_model = str(safe_get(data,'resistivity_model','jardin')).lower()
-            self.maxit = int(data['maxit'])
-            self.accel = float(data['accel'])
-            self.err = float(data['err'])
             self.verbosity = int(data['verbosity'])
             self.parallel = bool(data['parallel'])
         except KeyError as e:
@@ -1342,9 +1349,11 @@ class POPCON:
         self.plotsettings: POPCON_plotsettings
         self.output: POPCON_data
 
+        # these are kept as absolute paths so that write_output can still copy
+        # them if the working directory has changed since construction
         if settingsfile is not None:
             self.settings = POPCON_settings(settingsfile)
-            self.settingsfile = settingsfile
+            self.settingsfile = os.path.abspath(settingsfile)
         else:
             pass
 
@@ -1352,13 +1361,13 @@ class POPCON:
             plotsettingsfile = DEFAULT_PLOTSETTINGS
 
         self.plotsettings = POPCON_plotsettings(plotsettingsfile)
-        self.plotsettingsfile = plotsettingsfile
+        self.plotsettingsfile = os.path.abspath(plotsettingsfile)
 
         if scalinglawfile is None:
             scalinglawfile = DEFAULT_SCALINGLAWS
 
         self.__get_scaling_laws(scalinglawfile)
-        self.scalinglawfile = scalinglawfile
+        self.scalinglawfile = os.path.abspath(scalinglawfile)
         
         self.__check_settings()
 
@@ -1429,14 +1438,10 @@ class POPCON:
 
         if self.settings.parallel:
             Paux, flags = solve_nT_par(params.state, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.accel,
-                                    self.settings.err, self.settings.maxit,
-                                    self.settings.verbosity)
+                                    n_e_20, T_i_keV, self.settings.verbosity)
         else:
             Paux, flags = solve_nT(params.state, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.accel,
-                                    self.settings.err, self.settings.maxit,
-                                    self.settings.verbosity)
+                                    n_e_20, T_i_keV, self.settings.verbosity)
 
 
         if self.settings.verbosity > 0:
@@ -1766,7 +1771,8 @@ betaN = {betaN:.3f}
         parameter allows specifying the storage location.
         """
         if name == '':
-            name = self.settings.name + '_' + datetime.datetime.now().strftime(r"%Y-%m-%d_%H:%M:%S")
+            stamp = datetime.datetime.now().strftime(r"%Y-%m-%d_%H-%M-%S")
+            name = re.sub(r'[^A-Za-z0-9._-]+', '_', self.settings.name) + '_' + stamp
 
         if directory is None:
             outputsdir = pathlib.Path(__file__).resolve().parent.parent.joinpath('outputs')
@@ -1946,7 +1952,7 @@ betaN = {betaN:.3f}
             geq_kappa = np.abs(np.max(lcfs[:,1]) - np.min(lcfs[:,1]))/(2*geq_a)
             geq_Rtop = lcfs[np.argmax(lcfs[:,1]),0]
             geq_Rbot = lcfs[np.argmin(lcfs[:,1]),0]
-            geq_delta = ((geq_R-geq_Rtop)/geq_a + (geq_R-geq_Rtop)/geq_a)/2
+            geq_delta = ((geq_R-geq_Rtop)/geq_a + (geq_R-geq_Rbot)/geq_a)/2
 
 
 
@@ -2068,7 +2074,10 @@ betaN = {betaN:.3f}
         if ('Zeff_target' in keys) != ('impurity' in keys):
             warn.append("Zeff_target and impurity must both be given to set an impurity "
                         "fraction from Z_eff; specifying only one has no effect.")
-        unknown = keys - KNOWN_SETTINGS_KEYS
+        for key in sorted(keys & set(DEPRECATED_SETTINGS_KEYS)):
+            warn.append(f"{key} is no longer used, because {DEPRECATED_SETTINGS_KEYS[key]}. "
+                        f"You can delete it from the settings file.")
+        unknown = keys - KNOWN_SETTINGS_KEYS - set(DEPRECATED_SETTINGS_KEYS)
         if unknown:
             warn.append(f"unrecognized settings, which are ignored: {', '.join(sorted(unknown))}.")
 
@@ -2089,9 +2098,7 @@ betaN = {betaN:.3f}
 
 @nb.njit(parallel=True, cache=True)
 def solve_nT_par(state, nn:int, nT:int,
-                n_e_20:np.ndarray, T_i_keV:np.ndarray,
-                accel:float=1.2, err:float=1e-5,
-                maxit:int=1000, verbosity=1):
+                n_e_20:np.ndarray, T_i_keV:np.ndarray, verbosity=1):
     """
     Compiling the solver allows for parallelization, as each
     point in the grid can be solved independently.
@@ -2111,9 +2118,7 @@ def solve_nT_par(state, nn:int, nT:int,
 
 @nb.njit(parallel=False, cache=True)
 def solve_nT(state, nn:int, nT:int,
-                n_e_20:np.ndarray, T_i_keV:np.ndarray,
-                accel:float=1.2, err:float=1e-5,
-                maxit:int=1000, verbosity=1):
+                n_e_20:np.ndarray, T_i_keV:np.ndarray, verbosity=1):
     """
     Compiling the solver allows for parallelization, as each
     point in the grid can be solved independently.

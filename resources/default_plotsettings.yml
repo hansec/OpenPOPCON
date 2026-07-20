@@ -8,7 +8,7 @@ xax: "T_i_av" # x-axis variable; T_i_av for average ion temperature,
               #                  T_e_av for average electron temperature,
               #                  T_e_ax for maximum electron temperature
 figsize: [8, 6] # figure size in inches
-fill_invalid: True # fill invalid values with gray
+fill_invalid: True # shade points with no physical solution
 
 #----------------------
 # Options per output
