@@ -12,6 +12,7 @@ If you make changes, append your name and the date to this list.
 
 Contributors:
 - Matthew Pharr (2024-07-09)
+- Alexei Zhurba (2025-04-04)
 
 """
 
@@ -33,87 +34,538 @@ DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml
 DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
 
 # core of calculations
-# jit compiled
-@nb.experimental.jitclass(spec = [
-            ('R', nb.float64), 
-            ('a', nb.float64),
-            ('kappa', nb.float64),
-            ('delta', nb.float64),
-            ('B0', nb.float64),
-            ('Ip', nb.float64),
-            ('Itot', nb.float64),
-            ('H', nb.float64),
-            ('M_i', nb.float64),
-            ('tipeak_over_tepeak', nb.float64),
-            ('fuel', nb.int64),
-            ('sqrtpsin', nb.float64[:]),
-            ('volgrid', nb.float64[:]),
-            ('agrid', nb.float64[:]),
-            ('nr', nb.int64),
-            ('impurityfractions', nb.float64[:]),
-            ('geomsdefined', nb.boolean),
-            ('rdefined', nb.boolean),
-            ('volgriddefined', nb.boolean),
-            ('agriddefined', nb.boolean),
-            ('extprof_imps', nb.boolean),
-            ('impsdefined', nb.boolean),
-            ('_jdefined', nb.boolean),
-            ('_nedefined', nb.boolean),
-            ('_nidefined', nb.boolean),
-            ('_Tidefined', nb.boolean),
-            ('_Tedefined', nb.boolean),
-            ('_qdefined', nb.boolean),
-            ('_ftrappeddefined', nb.boolean),
-            ('_extradefined', nb.boolean),
-            ('j_alpha1', nb.float64),
-            ('j_alpha2', nb.float64),
-            ('j_offset', nb.float64),
-            ('ne_alpha1', nb.float64),
-            ('ne_alpha2', nb.float64),
-            ('ne_offset', nb.float64),
-            ('ni_alpha1', nb.float64),
-            ('ni_alpha2', nb.float64),
-            ('ni_offset', nb.float64),
-            ('Ti_alpha1', nb.float64),
-            ('Ti_alpha2', nb.float64),
-            ('Ti_offset', nb.float64),
-            ('Te_alpha1', nb.float64),
-            ('Te_alpha2', nb.float64),
-            ('Te_offset', nb.float64),
-            ('j_prof', nb.float64[:]),
-            ('ne_prof', nb.float64[:]),
-            ('ni_prof', nb.float64[:]),
-            ('Te_prof', nb.float64[:]),
-            ('Ti_prof', nb.float64[:]),
-            ('q_prof', nb.float64[:]),
-            ('ftrapped_prof', nb.float64[:]),
-            ('extraprof', nb.float64[:]),
-            ('extprof_impfracs', nb.float64[:]),
-            ('H_fac', nb.float64),
-            ('scaling_const', nb.float64),
-            ('M_i_alpha', nb.float64),
-            ('Ip_alpha', nb.float64),
-            ('R_alpha', nb.float64),
-            ('a_alpha', nb.float64),
-            ('kappa_alpha', nb.float64),
-            ('B0_alpha', nb.float64),
-            ('Pheat_alpha', nb.float64),
-            ('n20_alpha', nb.float64),
-            ('resistivity_alg', nb.int16),
-            ('verbosity', nb.int64),
-          ]) # type: ignore
+# jit compiled. Module level so cache=True works; jitclasses can't cache
+
+# Parameters the functions below operate on. namedtuple fields can't start
+# with an underscore, so the _*defined flags drop it. V is constant after setup
+State = namedtuple('State', [
+    'R', 'a', 'kappa', 'delta', 'B0', 'Ip', 'Itot', 'M_i',
+    'tipeak_over_tepeak', 'fuel', 'nr',
+    'sqrtpsin', 'volgrid', 'agrid', 'impurityfractions',
+    'rdefined', 'volgriddefined', 'agriddefined',
+    'jdefined', 'nedefined', 'nidefined', 'Tidefined', 'Tedefined',
+    'qdefined', 'ftrappeddefined', 'extradefined',
+    'j_alpha1', 'j_alpha2', 'j_offset',
+    'ne_alpha1', 'ne_alpha2', 'ne_offset',
+    'ni_alpha1', 'ni_alpha2', 'ni_offset',
+    'Ti_alpha1', 'Ti_alpha2', 'Ti_offset',
+    'Te_alpha1', 'Te_alpha2', 'Te_offset',
+    'j_prof', 'ne_prof', 'ni_prof', 'Te_prof', 'Ti_prof',
+    'q_prof', 'ftrapped_prof', 'extraprof',
+    'H_fac', 'scaling_const', 'M_i_alpha', 'Ip_alpha', 'R_alpha',
+    'a_alpha', 'kappa_alpha', 'B0_alpha', 'Pheat_alpha', 'n20_alpha',
+    'resistivity_alg', 'verbosity',
+    'V',
+])
+
+#-------------------------------------------------------------------
+# Profiles and integration
+#-------------------------------------------------------------------
+
+@nb.njit(cache=True)
+def get_profile(s, rho, profid:int):
+    """
+    Returns the profile for a given profile ID at a given rho.
+    Allows for easy interpolation at runtime and avoids implementing
+    many profile functions.
+    -3: Area grid
+    -2: Sqrt(psin) for geometry
+    -1: Volume grid
+    0: J profile
+    1: n_e profile
+    2: n_i profile
+    3: Ti profile
+    4: Te profile
+    5: q profile
+    6: ftrapped profile
+    7: bavg profile
+    """
+    if profid == -3:
+        if not s.agriddefined:
+            raise ValueError("Area grid not defined.")
+        return np.interp(rho, s.sqrtpsin, s.agrid)
+    elif profid == -2:
+        if not s.rdefined:
+            raise ValueError("Geometry profiles not defined.")
+        return np.interp(rho, s.sqrtpsin, s.sqrtpsin)
+    elif profid == -1:
+        if not s.volgriddefined:
+            raise ValueError("Volume grid not defined.")
+        return np.interp(rho, s.sqrtpsin, s.volgrid)
+    elif profid == 0:
+        if not s.jdefined:
+            raise ValueError("J profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.j_prof)
+    elif profid == 1:
+        if not s.nedefined:
+            raise ValueError("n_e profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.ne_prof)
+    elif profid == 2:
+        if not s.nidefined:
+            raise ValueError("n_i profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.ni_prof)
+    elif profid == 3:
+        if not s.Tidefined:
+            raise ValueError("Ti profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.Ti_prof)
+    elif profid == 4:
+        if not s.Tedefined:
+            raise ValueError("Te profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.Te_prof)
+    elif profid == 5:
+        if not s.qdefined:
+            raise ValueError("q profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.q_prof)
+    elif profid == 6:
+        if not s.ftrappeddefined:
+            raise ValueError("ftrapped profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.ftrapped_prof)
+    elif profid == 7:
+        if not s.extradefined:
+            raise ValueError("extra profile not defined.")
+        return np.interp(rho, s.sqrtpsin, s.extraprof)
+    else:
+        raise ValueError("Invalid profile ID.")
+
+@nb.njit(cache=True)
+def volume_integral(s, rho, func) -> float:
+    r"""
+    Integrates a function of rho dV-like:
+
+    $\int_0^1 func(\rho) \frac{dV}{d\rho} d\rho$
+    """
+    # NOTE: profile must be an array of the same length as rho.
+    # Integrates functions of rho dV-like
+    V_interp = np.interp(rho, s.sqrtpsin, s.volgrid)
+    return np.trapz(func, V_interp)
+    
+#-------------------------------------------------------------------
+# Physical Quantities
+#-------------------------------------------------------------------
+
+@nb.njit(cache=True)
+def Zeff(s, T_e_keV) -> float:
+    """
+    Effective ion charge.
+
+    Zeff = sum ( n_i * Z_i^2 ) / n_e
+    """
+    # n_i = n20 * species fraction
+    # n_e = n20 / dilution
+    # n20 cancels
+
+    # Hydrogen isotopes + impurities
+    return ( (1-np.sum(s.impurityfractions)) + np.sum(s.impurityfractions*phys.get_Zeffs(T_e_keV)**2))*plasma_dilution(s, T_e_keV)
+
+@nb.njit(cache=True)
+def plasma_dilution(s, T_e_keV) -> float:
+    """
+    Plasma dilution factor; number of ions per electron. Always <=1.
+    """
+    dil = 1/(1 + np.sum(s.impurityfractions*phys.get_Zeffs(T_e_keV)))
+    return dil
+
+# coefficient for Spitzer conductivity, necessary to obtain ohmic power
+# def get_Cspitz(self, volavgcurr:bool, T0):
+#     Fz    = (1+1.198*self.Zeff(T0) + 0.222*self.Zeff(T0)**2)/(1+2.966*self.Zeff(T0) + 0.753*self.Zeff(T0)**2)
+#     eta1  = 1.03e-4*self.Zeff(T0)*Fz
+#     j0avg = self.Ip/(np.pi*self.a**2*self.kappa)*1.0e6
+#     if (volavgcurr == True):
+#         # TODO: Change this to use volgrid for averaging
+#         Cspitz = eta1*self.q_a*j0avg**2
+#     else:
+#         Cspitz = eta1
+#     Cspitz /= 1.6e-16*1.0e20 #unit conversion to keV 10^20 m^-3
+#     return Cspitz
+
+# def get_eta_spitzer(self, rho, T0, n20):
+#     # Calculate the Spitzer resistivity in Ohm-m
+#     # eta_spitzer = 4 sqrt(2pi)/3 Z_eff e^2 sqrt(m_e) ln(Lambda) / (4 pi epsilon_0)^2 T_e^(3/2)
+#     # Const = 4 sqrt(2pi)/3 * 1.602e-19^2 * 9.109e-31 / ( (4 pi * 8.854e-12)^2 * 1.602e-16^3/2 )
+#     # eta = const*Z_eff*ln(Lambda)*(T_e (keV))^(-3/2)
+#     return
+
+@nb.njit(cache=True)
+def eta_NC(s, rho, T_e_keV:float, n_e_20:float):
+    """
+    Neoclassical resistivity in Ohm-m.
+
+    Equations 16-17 from [1] Jardin et al. 1993, or equation 6 from [8] Paz-Soldan et al. 2016
+    """
+
+    if np.any(rho <= 0):
+        raise ValueError("Invalid rho value. Neoclassical resistivity not defined at rho=0.")
+    T_e_r = T_e_keV*get_profile(s, rho, 4)
+    n_e_r = 1e20*n_e_20*get_profile(s, rho, 1)
+    q = get_profile(s, rho, 5)
+    Zeffprof = np.empty_like(T_e_r)
+    for i in np.arange(T_e_r.shape[0]):
+        Zeffprof[i] = Zeff(s, T_e_r[i])
+    # logLambda = 17.1-np.log(np.sqrt(n_e_r)/(T_e_r*1e3)) # From Jardin
+    logLambda = np.empty_like(Zeffprof)
+    where = T_e_r*1e3>10*Zeffprof**2
+    elsewhere = np.logical_not(where)
+    logLambda[where] = 24 - np.log(np.sqrt(n_e_r)/(T_e_r*1e3))[where] # Plasma Formulary
+    logLambda[elsewhere] = 23 - np.log(np.sqrt(n_e_r)*Zeffprof/(T_e_r*1e3)**(3/2))[elsewhere] # Plasma Formulary
+    logLambda[logLambda<5] = 5
+    eta_C = 1.03e-4 * logLambda * (T_e_r*1e3)**(-3/2)
+
+    Lambda_E = 3.4/Zeffprof * (1.13 + Zeffprof) / (2.67 + Zeffprof)
+    C_R = 0.56/Zeffprof * (3.0 - Zeffprof) / (3.0 + Zeffprof)
+    xi = 0.58 + 0.2*Zeffprof
+    invaspect = s.a/s.R
+
+    if not s.ftrappeddefined:
+        f_t = np.sqrt(2*rho*invaspect)
+        nu_star_e = 1/10.2e16 * s.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
+        eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
+    else:
+        f_t_prof = get_profile(s, rho, 6)
+        nu_star_e = 1/10.2e16 * s.R * q * n_e_r * np.exp(logLambda) / (f_t_prof * invaspect * (T_e_r*1e3)**2)
+        eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t_prof/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t_prof/( 1 + xi * nu_star_e ) )
+
+
+    eta_NC = eta_C / eta_C_eta_NC_ratio
+
+    if s.resistivity_alg == 0:
+        return eta_NC
+
+    f_CL = (1+1.2*Zeffprof + 0.22*Zeffprof**2)/(1+3*Zeffprof + 0.75*Zeffprof**2)
+
+    f_NC = 1/ ( 1- np.sqrt( 2*invaspect / (1 + invaspect) ) )
+
+    eta_NC_2 = eta_C * f_CL * f_NC
+
+    if s.resistivity_alg == 1:
+        return eta_NC_2
+
+    if s.resistivity_alg == 2:
+        eta_NC_max = np.empty_like(eta_NC)
+
+        for i in range(len(eta_NC)):
+            eta_NC_max[i] = max(eta_NC[i], eta_NC_2[i])
+
+        return eta_NC_max
+
+    else:
+        raise ValueError("Invalid resistivity algorithm. Must be 0, 1, or 2.")
+
+@nb.njit(cache=True)
+def Vloop(s, T_e_keV, n_e_20) -> float:
+    """
+    Loop Voltage in Volts.
+
+    V_loop = P_ohmic / Ip
+    """
+    P_OH = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
+    return P_OH/s.Ip
+
+@nb.njit(cache=True)
+def BetaN(s, T_i_keV, n_e_20) -> float:
+    """
+    Normalized beta, beta*a*B0/Ip.
+
+    beta = 2 mu0 <P> / (B^2)
+    <P> = int P dV / V (average pressure)
+    beta_N = beta a B0 / (Ip)
+    """
+    P_avg = 1e6*volume_integral(s, s.sqrtpsin, _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))/s.V
+    beta =  2*(4e-7*np.pi)*P_avg/(s.B0**2)
+    return beta*s.a*s.B0/s.Ip
+
+@nb.njit(cache=True)
+def tauE_scalinglaw(s, Pheat, n_e_20) -> float:
+    """
+    User-chosen confinement time scaling law
+    """
+    tauE = s.H_fac*s.scaling_const
+    tauE *= s.M_i**s.M_i_alpha
+    tauE *= s.Ip**s.Ip_alpha
+    tauE *= s.R**s.R_alpha
+    tauE *= s.a**s.a_alpha
+    tauE *= s.kappa**s.kappa_alpha
+    tauE *= s.B0**s.B0_alpha
+    tauE *= Pheat**s.Pheat_alpha
+    tauE *= n_e_20**s.n20_alpha
+    return tauE
+
+@nb.njit(cache=True)
+def tauE_H98(s, Pheat, n_e_20) -> float:
+    """
+    H98y2 scaling law for comparison
+    """
+    tauE = 0.145
+    #M_i**(0.19)*Ip**(0.93)*R**(1.39)*a**(0.58)*kappa**(0.78)*B0**(0.15)*Pheat**(-0.69)*n20**(0.41)
+    tauE *= s.M_i**0.19
+    tauE *= s.Ip**0.93
+    tauE *= s.R**1.39
+    tauE *= s.a**0.58
+    tauE *= s.kappa**0.78
+    tauE *= s.B0**0.15
+    tauE *= Pheat**(-0.69)
+    tauE *= n_e_20**0.41
+    return tauE
+
+@nb.njit(cache=True)
+def tauE_H89(s, Pheat, n_e_20) -> float:
+    """
+    H89 scaling law for comparison
+    """
+    #0.048*M_i**(0.5)*Ip**(0.85)*R**(1.2)*a**(0.3)*kappa**(0.5)*B0**(0.2)*Pheat**(-0.5)*n20**(0.1)
+    tauE = 0.048
+    tauE *= s.M_i**0.5
+    tauE *= s.Ip**0.85
+    tauE *= s.R**1.2
+    tauE *= s.a**0.3
+    tauE *= s.kappa**0.5
+    tauE *= s.B0**0.2
+    tauE *= Pheat**(-0.5)
+    tauE *= n_e_20**0.1
+    return tauE
+
+#-------------------------------------------------------------------
+# Power profiles
+#-------------------------------------------------------------------
+
+@nb.njit(cache=True)
+def _W_tot_prof(s, rho, T_i_keV:float, n_e_20:float):
+    """
+    Plasma energy per cubic meter; also pressure.
+    """
+    n_e_r = 1e20*n_e_20*get_profile(s, rho, 2)
+    T_e_r = T_i_keV*get_profile(s, rho, 4)/s.tipeak_over_tepeak
+    dil = plasma_dilution(s, T_i_keV/s.tipeak_over_tepeak)
+    n_i_r = 1e20*n_e_20*get_profile(s, rho, 2)*dil
+    T_i_r = T_i_keV*get_profile(s, rho, 3)
+    # W_density = 3/2 * n_i * T_i
+    # = 3/2 * (n_i_r) ( 1.60218e-22 * T_i_r (keV) ) (MJ/m^3)
+    return 3/2 * 1.60218e-22 * (n_i_r * T_i_r + n_e_r * T_e_r)
+
+@nb.njit(cache=True)
+def _P_DDpT_prof(s, rho, T_i_keV:float, n_i_20:float):
+    """
+    D(d,p)T power per cubic meter
+    """
+    if s.fuel == 1:
+        dfrac = 1
+    elif s.fuel == 2:
+        dfrac = 0.5
+    else:
+        raise ValueError("Invalid fuel cycle.")
+
+    n_i_r = 1e20*n_i_20*get_profile(s, rho, 2)
+    T_i_r = T_i_keV*get_profile(s, rho, 3)
+
+    # reaction frequency f = n_D/sqrt(2) * n_D/sqrt(2) * <sigma v> (1/s)
+    # 1.60218e-22 is the conversion factor from keV to MJ
+    # <sigma v> is in cm^3/s so we need to convert to m^3/s, hence 1e-6
+    # P_DD_density = 1.60218e-22 * f(DD->pT) * (T_tritium + T_proton)  (MW/m^3)
+
+    f_ddpt = np.power( ( dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,2) * 1e-6
+    return 1.60218e-22 * f_ddpt * (1.01e3 + 3.02e3)
+
+@nb.njit(cache=True)
+def _P_DDnHe3_prof(s, rho, T_i_keV:float, n_i_20:float):
+    """
+    D(d,n)He3 power per cubic meter
+    """
+    if s.fuel == 1:
+        dfrac = 1-np.sum(s.impurityfractions)
+    elif s.fuel == 2:
+        dfrac = 0.5-np.sum(s.impurityfractions)/2
+    else:
+        raise ValueError("Invalid fuel cycle.")
+
+    n_i_r = 1e20*n_i_20*get_profile(s, rho, 2)
+    T_i_r = T_i_keV*get_profile(s, rho, 3)
+
+    # See _P_DDpT_prof for explanation.
+    # Note, for heating, only the He3 heats the plasma. For heating purposes,
+    # multiply by 0.82e3/(2.45e3 + 0.82e3).
+
+    f_ddnhe3 = np.power( (  dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,3) * 1e-6
+    return 1.60218e-22 * f_ddnhe3 * (2.45e3 + 0.82e3)
+
+@nb.njit(cache=True)
+def _P_DTnHe4_prof(s, rho, T_i_keV:float, n_i_20:float):
+    """
+    T(d,n)He4 power density in MW/m^3
+    """
+    if s.fuel == 1:
+        dfrac = 1-np.sum(s.impurityfractions)
+        tfrac = 0
+    elif s.fuel == 2:
+        dfrac = 0.5-np.sum(s.impurityfractions)/2
+        tfrac = 0.5-np.sum(s.impurityfractions)/2
+    else:
+        raise ValueError("Invalid fuel cycle.")
+
+    n_i_r = 1e20*n_i_20*get_profile(s, rho, 2)
+    T_i_r = T_i_keV*get_profile(s, rho, 3)
+
+    # See _P_DDpT_prof for explanation.
+    # Note, for heating, only the He4 / alpha heats the plasma. For heating purposes,
+    # multiply by 3.52e3/(3.52e3 + 14.06e3).
+
+    f_dtnhe4 = dfrac*(n_i_r) * tfrac*(n_i_r) * phys.get_reactivity(T_i_r,1) * 1e-6
+    return 1.60218e-22 * f_dtnhe4 * (3.52e3 + 14.06e3)
+
+@nb.njit(cache=True)
+def _P_fusion_heating(s, rho, T_i_keV:float, n_i_20:float):
+    """
+    D-D and D-T heating power density in MW/m^3
+    """
+    return  _P_DDpT_prof(s, rho,T_i_keV,n_i_20) + \
+          _P_DDnHe3_prof(s, rho,T_i_keV,n_i_20)*(0.82e3/(2.45e3+0.82e3))+\
+          _P_DTnHe4_prof(s, rho,T_i_keV,n_i_20)*(3.52e3/(3.52e3+14.06e3))
+
+@nb.njit(cache=True)
+def _P_fusion(s, rho, T_i_keV:float, n_i_20:float):
+    """
+    Fusion power density in MW/m^3
+    """
+    return _P_DDpT_prof(s, rho, T_i_keV, n_i_20) + \
+            _P_DDnHe3_prof(s, rho,T_i_keV,n_i_20)+\
+            _P_DTnHe4_prof(s, rho,T_i_keV,n_i_20)
+
+@nb.njit(cache=True)
+def _P_brem_rad(s, rho, T_e_keV:float, n_e_20:float):
+    """
+    Radiative power density in MW/m^3; See formulary.
+    """
+
+    T_e_r = T_e_keV*get_profile(s, rho, 4)
+    n_e_r = 1e20*n_e_20*get_profile(s, rho, 1)
+
+    total_Zeff = np.empty(T_e_r.shape[0],dtype=np.float64)
+    for i in np.arange(T_e_r.shape[0]):
+        total_Zeff[i] = Zeff(s, T_e_r[i])
+    G = 1.1 # Gaunt factor
+    # P_brem = 5.35e-3*1e-6*G*total_Zeff*(1e-20*n_e_r)**2*T_e_r**0.5
+    # From Plasma Formulary
+    P_brem = G*1e-6*np.sqrt(1000*T_e_r)*total_Zeff*(n_e_r/7.69e18)**2
+    return P_brem
+
+@nb.njit(cache=True)
+def _P_synch(s, rho, T_e_keV:float, n_e_20:float):
+    """
+    Synchrotron radiation power density in MW/m^3; see Zohm 2019.
+    """
+    T_e_r = T_e_keV*get_profile(s, rho, 4)
+    n_e_r = n_e_20*get_profile(s, rho, 1)
+    P_synch = 1.32e-7*(s.B0*T_e_r)**2.5 * np.sqrt(n_e_r/s.a) * (1 + 18*s.a/(s.R*np.sqrt(T_e_r)))
+
+    return P_synch
+
+@nb.njit(cache=True)
+def _P_impurity_rad(s, rho, T_e_keV:float, n_e_20:float):
+    """
+    Radiative power density from impurities in MW/m^3; see Zohm 2019.
+    """
+    T_e_r = T_e_keV*get_profile(s, rho, 4)
+    n_e_r = 1e20*n_e_20*get_profile(s, rho, 1)
+    T_e_r[T_e_r < 0.05] = 0.05
+    Lz = np.empty((T_e_r.shape[0],6),dtype=np.float64)
+    for i in np.arange(T_e_r.shape[0]):
+        Lz[i,:] = phys.get_rads(T_e_r[i])
+
+    P_line = np.sum(1e-6*(Lz.T*(n_e_r)**2).T*s.impurityfractions,axis=1)
+    return P_line
+
+@nb.njit(cache=True)
+def _P_rad(s, rho, T_e_keV:float, n_e_20:float):
+    """
+    Total radiative power density in MW/m^3.
+    """
+    return _P_brem_rad(s, rho, T_e_keV, n_e_20) + _P_impurity_rad(s, rho, T_e_keV, n_e_20) + _P_synch(s, rho, T_e_keV, n_e_20)
+
+@nb.njit(cache=True)
+def _P_OH_prof(s, rho, T_e_keV:float, n_e_20:float):
+    """
+    Ohmic power density in MW/m^3
+    """
+
+    eta_nc = eta_NC(s, rho, T_e_keV, n_e_20)
+    J = s.Itot*1e6*get_profile(s, rho, 0)
+    return 1e-6*eta_nc*J**2
+
+@nb.njit(cache=True)
+def Q_fusion(s, T_i_keV:float, n_e_20:float, Paux:float) -> float:
+    """
+    Physical fusion gain factor.
+    """
+    T_e_keV = T_i_keV/s.tipeak_over_tepeak
+    dil = plasma_dilution(s, T_e_keV)
+    n_i_20 = n_e_20*dil
+    P_fusion = volume_integral(s, s.sqrtpsin, _P_fusion(s, s.sqrtpsin, T_i_keV, n_i_20))
+    P_OH = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
+    if Paux == 0:
+        return 9999999.
+    else:
+        return P_fusion/(Paux + P_OH)
+
+
+#-----------------------------------------------------------------------
+# Power balance solver
+#-----------------------------------------------------------------------
+
+@nb.njit(cache=True)
+def P_aux_impfrac(s, n_e_20, T_i_keV):
+    """
+    Closed-form power balance solver for the impurity-fraction-fixed mode.
+    """
+    T_e_keV = T_i_keV/s.tipeak_over_tepeak
+    dil = plasma_dilution(s, T_e_keV)
+    n_i_20 = n_e_20*dil
+    line_average_fac = np.average(get_profile(s, s.sqrtpsin, 1))
+    P_fusion_heating = volume_integral(s, s.sqrtpsin, _P_fusion_heating(s, s.sqrtpsin, T_i_keV, n_i_20))
+    P_ohmic_heating = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
+    W_tot = volume_integral(s, s.sqrtpsin, _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))
+    P_brem = volume_integral(s, s.sqrtpsin, _P_brem_rad(s, s.sqrtpsin, T_e_keV, n_e_20))
+    P_synch = volume_integral(s, s.sqrtpsin, _P_synch(s, s.sqrtpsin, T_e_keV, n_e_20))
+    P_imp = volume_integral(s, s.sqrtpsin, _P_impurity_rad(s, s.sqrtpsin, T_e_keV, n_e_20))
+    alpha = s.Pheat_alpha
+    K = tauE_scalinglaw(s, 1.0, n_e_20*line_average_fac)
+    # Balance P_heat = W_tot / tauE = (W_tot/K) * P_heat^(-alpha)
+    P_heat = (W_tot/K)**(1.0/(1.0+alpha))
+    # P_heat = P_aux + P_OH + P_fusion_heating - P_brem - P_synch
+    P_aux = P_heat - P_ohmic_heating - P_fusion_heating + P_brem + P_synch
+
+    # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
+    # balance equals P_heat. The impurity power is assumed to displace what
+    # would otherwise be conductive/turbulent/instability-driven loss, so it
+    # radiates power away that would otherwise cross the separatrix. Such a
+    # state is not physical; flag it.
+    if P_imp > P_heat:
+        if s.verbosity > 0:
+            print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
+        P_aux = 99999.
+
+    if np.isnan(P_aux):
+        if s.verbosity > 0:
+            print("NaN detected in P_aux_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
+        P_aux = 99999.
+
+    return P_aux
+
+# NOT jit compiled
 class POPCON_algorithms:
     """
     Class POPCON_algorithms
 
-    This class is the mathematical backbone of the OpenPOPCON code. It
-    is compiled with numba to provide fast calculations for scans. It is
-    best used in Jupyter notebooks or scripts where the user wants to
-    conduct a scan, as it is compiled at runtime; this means that the
-    first time the code executes, it will take a bit longer to compile,
-    but the subsequent runs will be much faster than raw Python code.
+    This class is the mathematical backbone of the OpenPOPCON code. Its
+    calculations are compiled with numba to provide fast calculations for
+    scans. It is best used in Jupyter notebooks or scripts where the user
+    wants to conduct a scan, as it is compiled at runtime; this means that
+    the first time the code executes, it will take a bit longer to compile,
+    but the subsequent runs will be much faster than raw Python code. The
+    compiled functions are cached to disk, so that first compile happens
+    once per machine; later sessions load it back.
 
     See __init__ for a list of parameters and their descriptions.
+
+    Setup writes to the attributes below; build_state then freezes them
+    into the State passed to the jit compiled functions.
 
     Properties:
     - n_GR: Greenwald density in 10^20/m^3
@@ -177,7 +629,6 @@ class POPCON_algorithms:
         self.nr: int                                            # Number of radial points
         # 0 = He, 1 = Ne, 2 = Ar, 3 = Kr, 4 = Xe, 5 = W
         self.impurityfractions = np.empty(6, dtype=np.float64)  # Impurity fractions for each impurity, relative to ion density
-        self.geomsdefined: bool = False                         # Whether geometry profiles are defined
         self.rdefined: bool = False                             # Whether radial grid is defined
         self.volgriddefined: bool = False                       # Whether volume grid is defined
         self.agriddefined: bool = False                         # Whether area grid is defined
@@ -227,8 +678,8 @@ class POPCON_algorithms:
         # Profiles
         #---------------------------------------------------------------
         """
-        All profiles are defined as arrays of the same length as 
-        sqrtpsin, and **normalized**! 
+        All profiles are defined as arrays of the same length as
+        sqrtpsin, and **normalized**!
         """
         self.j_prof  = np.empty(0,dtype=np.float64)             # Current density profile
         self.ne_prof = np.empty(0,dtype=np.float64)             # Electron density profile
@@ -247,7 +698,7 @@ class POPCON_algorithms:
         self.H_fac: float = 1.0                                 # H (scaling law enhancement) factor
         self.scaling_const: float = 0.145                       # Scaling law coefficient
         self.M_i_alpha: float = 0.19                            # Ion mass scaling law exponent
-        self.Ip_alpha: float = 0.93                             # Plasma current scaling law exponent 
+        self.Ip_alpha: float = 0.93                             # Plasma current scaling law exponent
         self.R_alpha: float = 1.39                              # Major radius scaling law exponent
         self.a_alpha: float = 0.58                              # Minor radius scaling law exponent
         self.kappa_alpha: float = 0.78                          # Elongation scaling law exponent
@@ -261,510 +712,22 @@ class POPCON_algorithms:
         self.resistivity_alg: int = 0                           # Resistivity algorithm. 0 = Jardin, 1 = Paz-Soldan, 2 = local maximum
         self.verbosity: int = 0                                 # Verbosity level. 0 = silent, 1 = normal, 2 = debug, 3 = print all matrices
 
+        self.state = None                                       # Set by build_state after setup
+
         pass
 
     #-------------------------------------------------------------------
-    # Properties
+    # State
     #-------------------------------------------------------------------
 
-    @property
-    def n_GR(self):
+    def build_state(self) -> State:
         """
-        Greenwald density in 10^20/m^3
+        Freezes the setup parameters into the State the jit compiled
+        functions take. Casts every field explicitly so the type
+        signature stays the same between sessions; the compile cache
+        keys on it.
         """
-        return self.Ip/(np.pi*self.a**2)
-    
-    @property
-    def V(self):
-        """
-        Plasma volume (in last closed flux surface) in m^3
-        """
-        return self.volume_integral(self.sqrtpsin, np.ones_like(self.sqrtpsin))
-    
-    @property
-    def A(self):
-        """
-        Plasma surface area (in last closed flux surface) in m^2
-        """
-        return self.agrid[-1]
-    #-------------------------------------------------------------------
-    # Profiles and integration
-    #-------------------------------------------------------------------
-
-    def get_profile(self, rho:npt.NDArray[np.float_], profid:int) -> npt.NDArray[np.float_]:
-        """
-        Returns the profile for a given profile ID at a given rho.
-        Allows for easy interpolation at runtime and avoids implementing
-        many profile functions.
-        -3: Area grid
-        -2: Sqrt(psin) for geometry
-        -1: Volume grid
-        0: J profile
-        1: n_e profile
-        2: n_i profile
-        3: Ti profile
-        4: Te profile
-        5: q profile
-        6: ftrapped profile
-        7: bavg profile
-        """
-        if profid == -3:
-            if not self.agriddefined:
-                raise ValueError("Area grid not defined.")
-            return np.interp(rho, self.sqrtpsin, self.agrid)
-        elif profid == -2:
-            if not self.rdefined:
-                raise ValueError("Geometry profiles not defined.")
-            return np.interp(rho, self.sqrtpsin, self.sqrtpsin)
-        elif profid == -1:
-            if not self.volgriddefined:
-                raise ValueError("Volume grid not defined.")
-            return np.interp(rho, self.sqrtpsin, self.volgrid)
-        elif profid == 0:
-            if not self._jdefined:
-                raise ValueError("J profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.j_prof)
-        elif profid == 1:
-            if not self._nedefined:
-                raise ValueError("n_e profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.ne_prof)
-        elif profid == 2:
-            if not self._nidefined:
-                raise ValueError("n_i profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.ni_prof)
-        elif profid == 3:
-            if not self._Tidefined:
-                raise ValueError("Ti profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.Ti_prof)
-        elif profid == 4:
-            if not self._Tedefined:
-                raise ValueError("Te profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.Te_prof)
-        elif profid == 5:
-            if not self._qdefined:
-                raise ValueError("q profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.q_prof)
-        elif profid == 6:
-            if not self._ftrappeddefined:
-                raise ValueError("ftrapped profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.ftrapped_prof)
-        elif profid == 7:
-            if not self._extradefined:
-                raise ValueError("extra profile not defined.")
-            return np.interp(rho, self.sqrtpsin, self.extraprof)
-        else:
-            raise ValueError("Invalid profile ID.")
-    
-    def volume_integral(self, rho, func) -> float:
-        r"""
-        Integrates a function of rho dV-like:
-
-        $\int_0^1 func(\rho) \frac{dV}{d\rho} d\rho$
-        """
-        # NOTE: profile must be an array of the same length as rho.
-        # Integrates functions of rho dV-like
-        V_interp = np.interp(rho, self.sqrtpsin, self.volgrid)
-        return np.trapz(func, V_interp)
-    
-    #-------------------------------------------------------------------
-    # Physical Quantities
-    #-------------------------------------------------------------------
-    
-    def Zeff(self, T_e_keV) -> float:
-        """
-        Effective ion charge.
-
-        Zeff = sum ( n_i * Z_i^2 ) / n_e
-        """
-        # n_i = n20 * species fraction
-        # n_e = n20 / dilution
-        # n20 cancels
-
-        # Hydrogen isotopes + impurities
-        return ( (1-np.sum(self.impurityfractions)) + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)**2))*self.plasma_dilution(T_e_keV)
-    
-    def plasma_dilution(self, T_e_keV) -> float:
-        """
-        Plasma dilution factor; number of ions per electron. Always <=1.
-        """
-        dil = 1/(1 + np.sum(self.impurityfractions*phys.get_Zeffs(T_e_keV)))
-        return dil
-
-    # coefficient for Spitzer conductivity, necessary to obtain ohmic power
-    # def get_Cspitz(self, volavgcurr:bool, T0):
-    #     Fz    = (1+1.198*self.Zeff(T0) + 0.222*self.Zeff(T0)**2)/(1+2.966*self.Zeff(T0) + 0.753*self.Zeff(T0)**2)
-    #     eta1  = 1.03e-4*self.Zeff(T0)*Fz
-    #     j0avg = self.Ip/(np.pi*self.a**2*self.kappa)*1.0e6
-    #     if (volavgcurr == True):
-    #         # TODO: Change this to use volgrid for averaging
-    #         Cspitz = eta1*self.q_a*j0avg**2
-    #     else:
-    #         Cspitz = eta1
-    #     Cspitz /= 1.6e-16*1.0e20 #unit conversion to keV 10^20 m^-3
-    #     return Cspitz
-
-    # def get_eta_spitzer(self, rho, T0, n20):
-    #     # Calculate the Spitzer resistivity in Ohm-m
-    #     # eta_spitzer = 4 sqrt(2pi)/3 Z_eff e^2 sqrt(m_e) ln(Lambda) / (4 pi epsilon_0)^2 T_e^(3/2)
-    #     # Const = 4 sqrt(2pi)/3 * 1.602e-19^2 * 9.109e-31 / ( (4 pi * 8.854e-12)^2 * 1.602e-16^3/2 ) 
-    #     # eta = const*Z_eff*ln(Lambda)*(T_e (keV))^(-3/2)
-    #     return 
-    
-    def eta_NC(self, rho, T_e_keV:float, n_e_20:float):
-        """
-        Neoclassical resistivity in Ohm-m.
-
-        Equations 16-17 from [1] Jardin et al. 1993, or equation 6 from [8] Paz-Soldan et al. 2016
-        """
-
-        if np.any(rho <= 0):
-            raise ValueError("Invalid rho value. Neoclassical resistivity not defined at rho=0.")
-        T_e_r = T_e_keV*self.get_profile(rho, 4)
-        n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
-        q = self.get_profile(rho, 5)
-        Zeffprof = np.empty_like(T_e_r)
-        for i in np.arange(T_e_r.shape[0]):
-            Zeffprof[i] = self.Zeff(T_e_r[i])
-        # logLambda = 17.1-np.log(np.sqrt(n_e_r)/(T_e_r*1e3)) # From Jardin
-        logLambda = np.empty_like(Zeffprof)
-        where = T_e_r*1e3>10*Zeffprof**2
-        elsewhere = np.logical_not(where)
-        logLambda[where] = 24 - np.log(np.sqrt(n_e_r)/(T_e_r*1e3))[where] # Plasma Formulary
-        logLambda[elsewhere] = 23 - np.log(np.sqrt(n_e_r)*Zeffprof/(T_e_r*1e3)**(3/2))[elsewhere] # Plasma Formulary
-        logLambda[logLambda<5] = 5
-        eta_C = 1.03e-4 * logLambda * (T_e_r*1e3)**(-3/2)
-
-        Lambda_E = 3.4/Zeffprof * (1.13 + Zeffprof) / (2.67 + Zeffprof)
-        C_R = 0.56/Zeffprof * (3.0 - Zeffprof) / (3.0 + Zeffprof)
-        xi = 0.58 + 0.2*Zeffprof
-        invaspect = self.a/self.R
-    
-        if not self._ftrappeddefined:
-            f_t = np.sqrt(2*rho*invaspect)
-            nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
-            eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
-        else:
-            f_t_prof = self.get_profile(rho, 6)
-            nu_star_e = 1/10.2e16 * self.R * q * n_e_r * np.exp(logLambda) / (f_t_prof * invaspect * (T_e_r*1e3)**2)
-            eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t_prof/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t_prof/( 1 + xi * nu_star_e ) )
-
-
-        eta_NC = eta_C / eta_C_eta_NC_ratio
-
-        if self.resistivity_alg == 0:
-            return eta_NC
-
-        f_CL = (1+1.2*Zeffprof + 0.22*Zeffprof**2)/(1+3*Zeffprof + 0.75*Zeffprof**2)
-        
-        f_NC = 1/ ( 1- np.sqrt( 2*invaspect / (1 + invaspect) ) )
-
-        eta_NC_2 = eta_C * f_CL * f_NC
-
-        if self.resistivity_alg == 1:
-            return eta_NC_2
-
-        if self.resistivity_alg == 2:
-            eta_NC_max = np.empty_like(eta_NC)
-
-            for i in range(len(eta_NC)):
-                eta_NC_max[i] = max(eta_NC[i], eta_NC_2[i])
-
-            return eta_NC_max
-        
-        else:
-            raise ValueError("Invalid resistivity algorithm. Must be 0, 1, or 2.")
-
-    
-    def Vloop(self, T_e_keV, n_e_20) -> float:
-        """
-        Loop Voltage in Volts.
-
-        V_loop = P_ohmic / Ip
-        """
-        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
-        return P_OH/self.Ip
-
-        
-    
-    def BetaN(self, T_i_keV, n_e_20) -> float:
-        """
-        Normalized beta, beta*a*B0/Ip.
-
-        beta = 2 mu0 <P> / (B^2)
-        <P> = int P dV / V (average pressure)
-        beta_N = beta a B0 / (Ip)
-        """
-        P_avg = 1e6*self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))/self.V
-        beta =  2*(4e-7*np.pi)*P_avg/(self.B0**2)
-        return beta*self.a*self.B0/self.Ip
-    
-    def tauE_scalinglaw(self, Pheat, n_e_20) -> float:
-        """
-        User-chosen confinement time scaling law
-        """
-        tauE = self.H_fac*self.scaling_const
-        tauE *= self.M_i**self.M_i_alpha
-        tauE *= self.Ip**self.Ip_alpha
-        tauE *= self.R**self.R_alpha
-        tauE *= self.a**self.a_alpha
-        tauE *= self.kappa**self.kappa_alpha
-        tauE *= self.B0**self.B0_alpha
-        tauE *= Pheat**self.Pheat_alpha
-        tauE *= n_e_20**self.n20_alpha
-        return tauE
-    
-    def tauE_H98(self, Pheat, n_e_20) -> float:
-        """
-        H98y2 scaling law for comparison
-        """
-        tauE = 0.145
-        #M_i**(0.19)*Ip**(0.93)*R**(1.39)*a**(0.58)*kappa**(0.78)*B0**(0.15)*Pheat**(-0.69)*n20**(0.41)
-        tauE *= self.M_i**0.19
-        tauE *= self.Ip**0.93
-        tauE *= self.R**1.39
-        tauE *= self.a**0.58
-        tauE *= self.kappa**0.78
-        tauE *= self.B0**0.15
-        tauE *= Pheat**(-0.69)
-        tauE *= n_e_20**0.41
-        return tauE
-    
-    def tauE_H89(self, Pheat, n_e_20) -> float:
-        """
-        H89 scaling law for comparison
-        """
-        #0.048*M_i**(0.5)*Ip**(0.85)*R**(1.2)*a**(0.3)*kappa**(0.5)*B0**(0.2)*Pheat**(-0.5)*n20**(0.1)
-        tauE = 0.048
-        tauE *= self.M_i**0.5
-        tauE *= self.Ip**0.85
-        tauE *= self.R**1.2
-        tauE *= self.a**0.3
-        tauE *= self.kappa**0.5
-        tauE *= self.B0**0.2
-        tauE *= Pheat**(-0.5)
-        tauE *= n_e_20**0.1
-        return tauE
-
-    #-------------------------------------------------------------------
-    # Power profiles
-    #-------------------------------------------------------------------
-
-    def _W_tot_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_e_20:float):
-        """
-        Plasma energy per cubic meter; also pressure.
-        """
-        n_e_r = 1e20*n_e_20*self.get_profile(rho, 2)
-        T_e_r = T_i_keV*self.get_profile(rho, 4)/self.tipeak_over_tepeak
-        dil = self.plasma_dilution(T_i_keV/self.tipeak_over_tepeak)
-        n_i_r = 1e20*n_e_20*self.get_profile(rho, 2)*dil
-        T_i_r = T_i_keV*self.get_profile(rho, 3)
-        # W_density = 3/2 * n_i * T_i
-        # = 3/2 * (n_i_r) ( 1.60218e-22 * T_i_r (keV) ) (MJ/m^3)
-        return 3/2 * 1.60218e-22 * (n_i_r * T_i_r + n_e_r * T_e_r)
-    
-    def _P_DDpT_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
-        """
-        D(d,p)T power per cubic meter
-        """
-        if self.fuel == 1:
-            dfrac = 1
-        elif self.fuel == 2:
-            dfrac = 0.5
-        else:
-            raise ValueError("Invalid fuel cycle.")
-        
-        n_i_r = 1e20*n_i_20*self.get_profile(rho, 2)
-        T_i_r = T_i_keV*self.get_profile(rho, 3)
-
-        # reaction frequency f = n_D/sqrt(2) * n_D/sqrt(2) * <sigma v> (1/s)
-        # 1.60218e-22 is the conversion factor from keV to MJ
-        # <sigma v> is in cm^3/s so we need to convert to m^3/s, hence 1e-6
-        # P_DD_density = 1.60218e-22 * f(DD->pT) * (T_tritium + T_proton)  (MW/m^3)
-
-        f_ddpt = np.power( ( dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,2) * 1e-6
-        return 1.60218e-22 * f_ddpt * (1.01e3 + 3.02e3)
-    
-    def _P_DDnHe3_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
-        """
-        D(d,n)He3 power per cubic meter
-        """
-        if self.fuel == 1:
-            dfrac = 1-np.sum(self.impurityfractions)
-        elif self.fuel == 2:
-            dfrac = 0.5-np.sum(self.impurityfractions)/2
-        else:
-            raise ValueError("Invalid fuel cycle.")
-        
-        n_i_r = 1e20*n_i_20*self.get_profile(rho, 2)
-        T_i_r = T_i_keV*self.get_profile(rho, 3)
-
-        # See _P_DDpT_prof for explanation.
-        # Note, for heating, only the He3 heats the plasma. For heating purposes,
-        # multiply by 0.82e3/(2.45e3 + 0.82e3).
-
-        f_ddnhe3 = np.power( (  dfrac*n_i_r / (np.sqrt(2)) ), 2) * phys.get_reactivity(T_i_r,3) * 1e-6
-        return 1.60218e-22 * f_ddnhe3 * (2.45e3 + 0.82e3)
-    
-    def _P_DTnHe4_prof(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
-        """
-        T(d,n)He4 power density in MW/m^3
-        """
-        if self.fuel == 1:
-            dfrac = 1-np.sum(self.impurityfractions)
-            tfrac = 0
-        elif self.fuel == 2:
-            dfrac = 0.5-np.sum(self.impurityfractions)/2
-            tfrac = 0.5-np.sum(self.impurityfractions)/2
-        else:
-            raise ValueError("Invalid fuel cycle.")
-        
-        n_i_r = 1e20*n_i_20*self.get_profile(rho, 2)
-        T_i_r = T_i_keV*self.get_profile(rho, 3)
-
-        # See _P_DDpT_prof for explanation.
-        # Note, for heating, only the He4 / alpha heats the plasma. For heating purposes,
-        # multiply by 3.52e3/(3.52e3 + 14.06e3).
-
-        f_dtnhe4 = dfrac*(n_i_r) * tfrac*(n_i_r) * phys.get_reactivity(T_i_r,1) * 1e-6
-        return 1.60218e-22 * f_dtnhe4 * (3.52e3 + 14.06e3)
-    
-    def _P_fusion_heating(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
-        """
-        D-D and D-T heating power density in MW/m^3
-        """
-        return  self._P_DDpT_prof(rho,T_i_keV,n_i_20) + \
-              self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)*(0.82e3/(2.45e3+0.82e3))+\
-              self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)*(3.52e3/(3.52e3+14.06e3))
-    
-    def _P_fusion(self, rho:npt.NDArray[np.float_], T_i_keV:float, n_i_20:float):
-        """
-        Fusion power density in MW/m^3
-        """
-        return self._P_DDpT_prof(rho, T_i_keV, n_i_20) + \
-                self._P_DDnHe3_prof(rho,T_i_keV,n_i_20)+\
-                self._P_DTnHe4_prof(rho,T_i_keV,n_i_20)
-    
-    def _P_brem_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
-        """
-        Radiative power density in MW/m^3; See formulary.
-        """
-
-        T_e_r = T_e_keV*self.get_profile(rho, 4)
-        n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
-
-        total_Zeff = np.empty(T_e_r.shape[0],dtype=np.float64)
-        for i in np.arange(T_e_r.shape[0]):
-            total_Zeff[i] = self.Zeff(T_e_r[i])
-        G = 1.1 # Gaunt factor
-        # P_brem = 5.35e-3*1e-6*G*total_Zeff*(1e-20*n_e_r)**2*T_e_r**0.5
-        # From Plasma Formulary
-        P_brem = G*1e-6*np.sqrt(1000*T_e_r)*total_Zeff*(n_e_r/7.69e18)**2
-        return P_brem
-    
-    def _P_synch(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
-        """
-        Synchrotron radiation power density in MW/m^3; see Zohm 2019.
-        """
-        T_e_r = T_e_keV*self.get_profile(rho, 4)
-        n_e_r = n_e_20*self.get_profile(rho, 1)
-        P_synch = 1.32e-7*(self.B0*T_e_r)**2.5 * np.sqrt(n_e_r/self.a) * (1 + 18*self.a/(self.R*np.sqrt(T_e_r)))
-
-        return P_synch
-    
-    def _P_impurity_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
-        """
-        Radiative power density from impurities in MW/m^3; see Zohm 2019.
-        """
-        T_e_r = T_e_keV*self.get_profile(rho, 4)
-        n_e_r = 1e20*n_e_20*self.get_profile(rho, 1)
-        T_e_r[T_e_r < 0.05] = 0.05
-        Lz = np.empty((T_e_r.shape[0],6),dtype=np.float64)
-        for i in np.arange(T_e_r.shape[0]):
-            Lz[i,:] = phys.get_rads(T_e_r[i])
-        
-        P_line = np.sum(1e-6*(Lz.T*(n_e_r)**2).T*self.impurityfractions,axis=1)
-        return P_line
-    
-    def _P_rad(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float):
-        """
-        Total radiative power density in MW/m^3.
-        """
-        return self._P_brem_rad(rho, T_e_keV, n_e_20) + self._P_impurity_rad(rho, T_e_keV, n_e_20) + self._P_synch(rho, T_e_keV, n_e_20)
-    
-    def _P_OH_prof(self, rho:npt.NDArray[np.float_], T_e_keV:float, n_e_20:float) -> npt.NDArray[np.float_]:
-        """
-        Ohmic power density in MW/m^3
-        """
-
-        eta_NC = self.eta_NC(rho, T_e_keV, n_e_20)
-        J = self.Itot*1e6*self.get_profile(rho, 0)
-        return 1e-6*eta_NC*J**2
-
-
-@nb.njit(cache=True)
-def Q_fusion(s, T_i_keV, n_e_20, Paux):
-    """Physical fusion gain factor."""
-    T_e_keV = T_i_keV/s.tipeak_over_tepeak
-    dil = plasma_dilution(s, T_e_keV)
-    n_i_20 = n_e_20*dil
-    P_fusion = volume_integral(s, s.sqrtpsin, _P_fusion(s, s.sqrtpsin, T_i_keV, n_i_20))
-    P_OH = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
-    if Paux == 0:
-        return 9999999.
-    else:
-        return P_fusion/(Paux + P_OH)
-
-
-#-----------------------------------------------------------------------
-# Power balance solver
-#-----------------------------------------------------------------------
-
-@nb.njit(cache=True)
-def P_aux_impfrac(s, n_e_20, T_i_keV):
-    """
-    Closed-form power balance solver for the impurity-fraction-fixed mode.
-    """
-    T_e_keV = T_i_keV/s.tipeak_over_tepeak
-    dil = plasma_dilution(s, T_e_keV)
-    n_i_20 = n_e_20*dil
-    line_average_fac = np.average(get_profile(s, s.sqrtpsin, 1))
-    P_fusion_heating = volume_integral(s, s.sqrtpsin, _P_fusion_heating(s, s.sqrtpsin, T_i_keV, n_i_20))
-    P_ohmic_heating = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
-    W_tot = volume_integral(s, s.sqrtpsin, _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))
-    P_brem = volume_integral(s, s.sqrtpsin, _P_brem_rad(s, s.sqrtpsin, T_e_keV, n_e_20))
-    P_synch = volume_integral(s, s.sqrtpsin, _P_synch(s, s.sqrtpsin, T_e_keV, n_e_20))
-    P_imp = volume_integral(s, s.sqrtpsin, _P_impurity_rad(s, s.sqrtpsin, T_e_keV, n_e_20))
-    alpha = s.Pheat_alpha
-    K = tauE_scalinglaw(s, 1.0, n_e_20*line_average_fac)
-    # Balance P_heat = W_tot / tauE = (W_tot/K) * P_heat^(-alpha)
-    P_heat = (W_tot/K)**(1.0/(1.0+alpha))
-    # P_heat = P_aux + P_OH + P_fusion_heating - P_brem - P_synch
-    P_aux = P_heat - P_ohmic_heating - P_fusion_heating + P_brem + P_synch
-
-    # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
-    # balance equals P_heat. The impurity power is assumed to displace what
-    # would otherwise be conductive/turbulent/instability-driven loss, so it
-    # radiates power away that would otherwise cross the separatrix. Such a
-    # state is not physical; flag it.
-    if P_imp > P_heat:
-        if s.verbosity > 0:
-            print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
-        P_aux = 99999.
-
-    if np.isnan(P_aux):
-        if s.verbosity > 0:
-            print("NaN detected in P_aux_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
-        P_aux = 99999.
-
-        return P_aux
-    #-------------------------------------------------------------------
-    # Setup functions
-    #-------------------------------------------------------------------
-
-    def build_state(self):
-        """
-        """
-        def _arr(x):
+        def arr(x):
             return np.ascontiguousarray(x, dtype=np.float64)
         s = State(
             R=np.float64(self.R), a=np.float64(self.a), kappa=np.float64(self.kappa),
@@ -772,8 +735,8 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
             Itot=np.float64(self.Itot), M_i=np.float64(self.M_i),
             tipeak_over_tepeak=np.float64(self.tipeak_over_tepeak),
             fuel=int(self.fuel), nr=int(self.nr),
-            sqrtpsin=_arr(self.sqrtpsin), volgrid=_arr(self.volgrid), agrid=_arr(self.agrid),
-            impurityfractions=_arr(self.impurityfractions),
+            sqrtpsin=arr(self.sqrtpsin), volgrid=arr(self.volgrid), agrid=arr(self.agrid),
+            impurityfractions=arr(self.impurityfractions),
             rdefined=bool(self.rdefined), volgriddefined=bool(self.volgriddefined),
             agriddefined=bool(self.agriddefined),
             jdefined=bool(self._jdefined), nedefined=bool(self._nedefined),
@@ -785,9 +748,9 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
             ni_alpha1=np.float64(self.ni_alpha1), ni_alpha2=np.float64(self.ni_alpha2), ni_offset=np.float64(self.ni_offset),
             Ti_alpha1=np.float64(self.Ti_alpha1), Ti_alpha2=np.float64(self.Ti_alpha2), Ti_offset=np.float64(self.Ti_offset),
             Te_alpha1=np.float64(self.Te_alpha1), Te_alpha2=np.float64(self.Te_alpha2), Te_offset=np.float64(self.Te_offset),
-            j_prof=_arr(self.j_prof), ne_prof=_arr(self.ne_prof), ni_prof=_arr(self.ni_prof),
-            Te_prof=_arr(self.Te_prof), Ti_prof=_arr(self.Ti_prof), q_prof=_arr(self.q_prof),
-            ftrapped_prof=_arr(self.ftrapped_prof), extraprof=_arr(self.extraprof),
+            j_prof=arr(self.j_prof), ne_prof=arr(self.ne_prof), ni_prof=arr(self.ni_prof),
+            Te_prof=arr(self.Te_prof), Ti_prof=arr(self.Ti_prof), q_prof=arr(self.q_prof),
+            ftrapped_prof=arr(self.ftrapped_prof), extraprof=arr(self.extraprof),
             H_fac=np.float64(self.H_fac), scaling_const=np.float64(self.scaling_const),
             M_i_alpha=np.float64(self.M_i_alpha), Ip_alpha=np.float64(self.Ip_alpha),
             R_alpha=np.float64(self.R_alpha), a_alpha=np.float64(self.a_alpha),
@@ -796,7 +759,7 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
             resistivity_alg=int(self.resistivity_alg), verbosity=int(self.verbosity),
             V=np.float64(0.0),
         )
-        # Precompute V through the identical jitted path used elsewhere.
+        # V through the same jit compiled path as before
         v = volume_integral(s, s.sqrtpsin, np.ones_like(s.sqrtpsin))
         self.state = s._replace(V=np.float64(v))
         return self.state
@@ -807,51 +770,57 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
 
     @property
     def n_GR(self):
-        """Greenwald density in 10^20/m^3."""
+        """
+        Greenwald density in 10^20/m^3
+        """
         return self.Ip/(np.pi*self.a**2)
 
     @property
     def V(self):
-        """Plasma volume (in last closed flux surface) in m^3."""
+        """
+        Plasma volume (in last closed flux surface) in m^3
+        """
         return self.state.V
 
     @property
     def A(self):
-        """Plasma surface area (in last closed flux surface) in m^2."""
+        """
+        Plasma surface area (in last closed flux surface) in m^2
+        """
         return self.agrid[-1]
 
     #-------------------------------------------------------------------
-    # Physics delegators (call the cached free functions on self.state)
+    # Calls to the jit compiled functions above
     #-------------------------------------------------------------------
 
-    def get_profile(self, rho, profid):
+    def get_profile(self, rho, profid:int):
         return get_profile(self.state, rho, profid)
 
-    def volume_integral(self, rho, func):
+    def volume_integral(self, rho, func) -> float:
         return volume_integral(self.state, rho, func)
 
-    def Zeff(self, T_e_keV):
+    def Zeff(self, T_e_keV) -> float:
         return Zeff(self.state, T_e_keV)
 
-    def plasma_dilution(self, T_e_keV):
+    def plasma_dilution(self, T_e_keV) -> float:
         return plasma_dilution(self.state, T_e_keV)
 
     def eta_NC(self, rho, T_e_keV, n_e_20):
         return eta_NC(self.state, rho, T_e_keV, n_e_20)
 
-    def Vloop(self, T_e_keV, n_e_20):
+    def Vloop(self, T_e_keV, n_e_20) -> float:
         return Vloop(self.state, T_e_keV, n_e_20)
 
-    def BetaN(self, T_i_keV, n_e_20):
+    def BetaN(self, T_i_keV, n_e_20) -> float:
         return BetaN(self.state, T_i_keV, n_e_20)
 
-    def tauE_scalinglaw(self, Pheat, n_e_20):
+    def tauE_scalinglaw(self, Pheat, n_e_20) -> float:
         return tauE_scalinglaw(self.state, Pheat, n_e_20)
 
-    def tauE_H98(self, Pheat, n_e_20):
+    def tauE_H98(self, Pheat, n_e_20) -> float:
         return tauE_H98(self.state, Pheat, n_e_20)
 
-    def tauE_H89(self, Pheat, n_e_20):
+    def tauE_H89(self, Pheat, n_e_20) -> float:
         return tauE_H89(self.state, Pheat, n_e_20)
 
     def _W_tot_prof(self, rho, T_i_keV, n_e_20):
@@ -887,14 +856,14 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
     def _P_OH_prof(self, rho, T_e_keV, n_e_20):
         return _P_OH_prof(self.state, rho, T_e_keV, n_e_20)
 
-    def Q_fusion(self, T_i_keV, n_e_20, Paux):
+    def Q_fusion(self, T_i_keV, n_e_20, Paux) -> float:
         return Q_fusion(self.state, T_i_keV, n_e_20, Paux)
 
     def P_aux_impfrac(self, n_e_20, T_i_keV):
         return P_aux_impfrac(self.state, n_e_20, T_i_keV)
 
     #-------------------------------------------------------------------
-    # Setup functions (plain Python; mutate instance attributes)
+    # Setup functions
     #-------------------------------------------------------------------
 
     def _addextprof(self, extprofvals, profid):
@@ -960,7 +929,7 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
             self._extradefined = True
         else:
             raise ValueError("Invalid profile ID.")
-        
+
     def _set_alpha_and_offset(self, alpha1, alpha2, offset, profid:int):
         """
         If the profile is not externally defined, this function sets the
@@ -999,6 +968,10 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
         else:
             raise ValueError("Invalid profile ID.")
 
+    # def _addextprof_imps(self, extprofvals):
+    #     # TODO: implement this
+    #     pass
+
     def _setup_profs(self) -> None:
         """
         Sets up profiles for the first time. If external profiles have
@@ -1034,6 +1007,7 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
             self.Te_prof = (1-self.Te_offset)*(1-rho**self.Te_alpha1)**self.Te_alpha2 + self.Te_offset
             self._Tedefined = True
         if not self._qdefined:
+            # self.q_a = 2*np.pi*self.a**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self.q_prof = 2*np.pi*(self.a*rho)**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self._qdefined = True
         if not self._ftrappeddefined:
@@ -1197,6 +1171,10 @@ POPCON_data_spec = [
     ('vloop', nb.float64[:,:]),
     ('betaN', nb.float64[:,:])
 ]
+
+# What populate_outputs returns; POPCON_data_spec minus the 1-D axes and Paux,
+# which are inputs. They have to be returned: with parallel=True, a prange
+# write through a namedtuple field never reaches the caller
 COMPUTED_FIELDS = [
     'n_i_20_max', 'n_i_20_avg', 'Pfusion', 'Pfusionheating', 'Pohmic',
     'Pbrems', 'Psynch', 'Pimprad', 'Prad', 'Pheat', 'Wtot', 'tauE',
@@ -1204,6 +1182,9 @@ COMPUTED_FIELDS = [
     'H89', 'H98', 'vloop', 'betaN',
 ]
 ComputedOutputs = namedtuple('ComputedOutputs', COMPUTED_FIELDS)
+
+
+# NOT jit compiled
 class POPCON_data:
     """
     Class POPCON_data
