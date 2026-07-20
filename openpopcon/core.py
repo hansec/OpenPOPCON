@@ -17,7 +17,6 @@ Contributors:
 """
 
 import numpy as np
-import numpy.typing as npt
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import yaml
@@ -31,7 +30,6 @@ from collections import namedtuple
 from .lib import phys_lib as phys
 import shutil
 import datetime
-from .lib import neat_json_encoder as nj
 
 # resistivity_model in the settings file -> resistivity_alg on the State
 RESISTIVITY_MODELS = {"jardin": 0, "paz-soldan": 1, "maximum": 2, "max": 2}
@@ -50,6 +48,9 @@ INVALID_REASONS = {
     INVALID_IMPRAD: "impurity radiation exceeds the confinement loss",
     INVALID_NAN: "no real solution to power balance",
 }
+
+# a solved point that needs no auxiliary heating
+NOAUX = 3
 
 # every key POPCON_settings.read understands; anything else in a settings file
 # is ignored, so it gets reported as a likely typo
@@ -262,7 +263,8 @@ def eta_NC(s, rho, T_e_keV:float, n_e_20:float):
     invaspect = s.a/s.R
 
     if not s.ftrappeddefined:
-        f_t = np.sqrt(2*rho*invaspect)
+        # Cap possible trapped particle fraction at 1
+        f_t = np.minimum(np.sqrt(2*rho*invaspect), 1.0)
         nu_star_e = 1/10.2e16 * s.R * q * n_e_r * np.exp(logLambda) / (f_t * invaspect * (T_e_r*1e3)**2)
         eta_C_eta_NC_ratio = Lambda_E * ( 1 - f_t/( 1 + xi * nu_star_e ) )*( 1 - C_R*f_t/( 1 + xi * nu_star_e ) )
     else:
@@ -545,7 +547,7 @@ def Q_fusion(s, T_i_keV:float, n_e_20:float, Paux:float) -> float:
     n_i_20 = n_e_20*dil
     P_fusion = volume_integral(s, s.sqrtpsin, _P_fusion(s, s.sqrtpsin, T_i_keV, n_i_20))
     P_OH = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
-    if Paux == 0:
+    if Paux + P_OH <= 0.:
         return 9999999.
     else:
         return P_fusion/(Paux + P_OH)
@@ -560,8 +562,8 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
     """
     Closed-form power balance solver for the impurity-fraction-fixed mode.
 
-    Returns (P_aux, flag), where flag is INVALID_OK, INVALID_IMPRAD or
-    INVALID_NAN. The caller reports these in aggregate; printing per point
+    Returns (P_aux, flag), where flag is INVALID_OK, NOAUX, INVALID_IMPRAD
+    or INVALID_NAN. The caller reports these in aggregate; printing per point
     would be one line per grid cell, out of order under prange.
     """
     T_e_keV = T_i_keV/s.tipeak_over_tepeak
@@ -583,17 +585,23 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
 
     flag = INVALID_OK
 
+    # A negative P_aux means the point already heats itself past the
+    # confinement loss with no auxiliary power at all
+    if P_aux < 0.0:
+        P_aux = 0.0
+        flag = NOAUX
+
     # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
     # balance equals P_heat. The impurity power is assumed to displace what
     # would otherwise be conductive/turbulent/instability-driven loss, so it
     # radiates power away that would otherwise cross the separatrix. Such a
     # state is not physical; flag it.
     if P_imp > P_heat:
-        P_aux = 99999.
+        P_aux = UNPHYSICAL
         flag = INVALID_IMPRAD
 
     if np.isnan(P_aux):
-        P_aux = 99999.
+        P_aux = UNPHYSICAL
         flag = INVALID_NAN
 
     return P_aux, flag
@@ -1060,9 +1068,8 @@ class POPCON_algorithms:
             # self.q_a = 2*np.pi*self.a**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self.q_prof = 2*np.pi*(self.a*rho)**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self._qdefined = True
-        if not self._ftrappeddefined:
-            self.ftrapped_prof = np.sqrt((self.B0*self.R/(self.R-rho*self.a))**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
-            self._ftrappeddefined = True
+        # profile 6 is the trapped particle fraction; eta_NC falls back to
+        # f_t = sqrt(2*rho*a/R) on its own, so no need to fill it
         if not self._extradefined:
             self.extraprof = np.sqrt((self.B0)**2 + ((4e-7*np.pi)*self.Ip*1e6/(2*np.pi*self.a*rho))**2)
             self._extradefined = True
@@ -1467,7 +1474,7 @@ class POPCON:
 
         if self.settings.verbosity > 0:
             print("Power balance solutions found. Populating output arrays.")
-            self.__report_invalid(flags)
+        self.__report_invalid(flags, verbose=self.settings.verbosity > 0)
         if self.settings.parallel:
             computed = populate_outputs_par(params.state, n_e_20, T_i_keV, T_e_keV, Paux,
                                             self.settings.Nn, self.settings.NTi)
@@ -1480,22 +1487,29 @@ class POPCON:
 
         pass
 
-    def __report_invalid(self, flags) -> None:
+    def __report_invalid(self, flags, verbose:bool=True) -> None:
         """
         Says how much of the grid has no physical solution, and why. These
-        points are set to P_aux = 99999 and masked out of the plot.
+        points are set to P_aux = UNPHYSICAL and masked out of the plot.
         """
         total = flags.size
-        ninvalid = int(np.count_nonzero(flags))
-        if ninvalid == 0:
+        counts = {code: int(np.count_nonzero(flags == code))
+                  for code in INVALID_REASONS}
+        ninvalid = sum(counts.values())
+        nnoaux = int(np.count_nonzero(flags == NOAUX))
+
+        if ninvalid:
+            print(f"{ninvalid} of {total} grid points ({100*ninvalid/total:.1f}%) "
+                  f"have no physical solution and are masked in the plot:")
+            for code, reason in INVALID_REASONS.items():
+                if counts[code]:
+                    print(f"  {counts[code]:>6d}  {reason}")
+        elif verbose:
             print(f"All {total} grid points solved.")
-            return
-        print(f"{ninvalid} of {total} grid points ({100*ninvalid/total:.1f}%) "
-              f"have no physical solution and are masked in the plot:")
-        for code, reason in INVALID_REASONS.items():
-            n = int(np.count_nonzero(flags == code))
-            if n:
-                print(f"  {n:>6d}  {reason}")
+
+        if nnoaux and verbose:
+            print(f"{nnoaux} of {total} grid points need no auxiliary heating "
+                  f"(P_aux cannot be less than zero, setting P_aux = 0).")
 
     def single_point(self, n_G_frac:float, Ti_av:float, plot:bool=True, show:bool=True) -> None:
         """
@@ -1519,10 +1533,14 @@ class POPCON:
         n_i_20 = n_e_20*dil
         line_avg_fac = np.average(self.algorithms.get_profile(rho, 1))
 
-        Paux, invalid = P_aux_impfrac(self.algorithms.state, n_e_20, T_i_keV)
-        if invalid:
-            print(f"This point has no physical solution: {INVALID_REASONS[invalid]}. "
+        Paux, flag = P_aux_impfrac(self.algorithms.state, n_e_20, T_i_keV)
+        if flag in INVALID_REASONS:
+            print(f"This point has no physical solution: {INVALID_REASONS[flag]}. "
                   f"The numbers below are not meaningful.")
+        elif flag == NOAUX:
+            print("This point needs no auxiliary heating, so P_aux is zero. "
+                  "Check Q below for whether that is ignition or just ohmic "
+                  "heating outrunning the loss at low temperature.")
 
         Pfusion = self.algorithms.volume_integral(rho,self.algorithms._P_fusion(rho, T_i_keV, n_i_20))
         Pfusion_heating = self.algorithms.volume_integral(rho,self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20))
@@ -2005,8 +2023,6 @@ betaN = {betaN:.3f}
                 print("Len of qr:",len(qr))
                 print("Len of agrid:",len(agrid))
                 print("Len of ftrapped_profile:",len(ftrapped_profile))
-
-            print(np.shape(ftrapped_profile))
 
             if np.abs(geq_a/self.settings.a - 1) > 0.1:
                 print(f"Warning: gEQDSK minor radius ({geq_a} m) differs significantly from settings a ({self.settings.a} m). Defaulting to gEQDSK value.")

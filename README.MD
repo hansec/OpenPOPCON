@@ -69,6 +69,8 @@ ValueError: Found 2 problem(s) in .../POPCON_input_example.yaml:
 
 Grid points where power balance has no physical solution are reported in aggregate after a run and masked out of the plot.
 
+The trapped particle fraction that the neoclassical resistivity needs is taken from the gEQDSK when one is supplied. Without a gEQDSK it falls back to `f_t = sqrt(2*rho*a/R)`, which stays below 1 for the aspect ratios these examples use but would not for a spherical tokamak.
+
 ## Bibliography
 
 [1] H.-S. Bosch and G. M. Hale, *Improved Formulas for Fusion Cross-Sections and Thermal Reactivities,* Nucl. Fusion **32**, 611 (1992).
@@ -123,7 +125,7 @@ class POPCON:
     self.algorithms: POPCON_algorithms   # sets up State, calls the functions above
     self.settings: POPCON_settings
     self.plotsettings: POPCON_plotsettings
-    self.output: POPCON_data             # output arrays at power balance
+    self.output: xarray.Dataset          # output arrays at power balance
 
     def run_POPCON(self):
         "Sets up and solves the whole n,T grid"
