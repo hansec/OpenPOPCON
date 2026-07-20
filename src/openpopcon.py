@@ -23,6 +23,7 @@ import yaml
 import json
 from .lib.openpopcon_util import *
 import numba as nb
+from collections import namedtuple
 from .lib import phys_lib as phys
 import shutil
 import datetime
@@ -699,63 +700,201 @@ class POPCON_algorithms:
         J = self.Itot*1e6*self.get_profile(rho, 0)
         return 1e-6*eta_NC*J**2
 
-    def Q_fusion(self, T_i_keV:float, n_e_20:float, Paux:float) -> float:
-        """
-        Physical fusion gain factor.
-        """
-        T_e_keV = T_i_keV/self.tipeak_over_tepeak
-        dil = self.plasma_dilution(T_e_keV)
-        n_i_20 = n_e_20*dil
-        P_fusion = self.volume_integral(self.sqrtpsin, self._P_fusion(self.sqrtpsin, T_i_keV, n_i_20))
-        P_OH = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
-        if Paux == 0:
-            return 9999999.
-        else:
-            return P_fusion/(Paux + P_OH)
-    
-    #-------------------------------------------------------------------
-    # Power Balance Relaxation Solvers
-    #-------------------------------------------------------------------
 
-    def P_aux_impfrac(self, n_e_20, T_i_keV):
-        """
-        Closed-form power balance solver for the impurity-fraction-fixed mode.
-        """
-        T_e_keV = T_i_keV/self.tipeak_over_tepeak
-        dil = self.plasma_dilution(T_e_keV)
-        n_i_20 = n_e_20*dil
-        line_average_fac = np.average(self.get_profile(self.sqrtpsin, 1))
-        P_fusion_heating = self.volume_integral(self.sqrtpsin, self._P_fusion_heating(self.sqrtpsin, T_i_keV, n_i_20))
-        P_ohmic_heating = self.volume_integral(self.sqrtpsin, self._P_OH_prof(self.sqrtpsin, T_e_keV, n_e_20))
-        W_tot = self.volume_integral(self.sqrtpsin, self._W_tot_prof(self.sqrtpsin, T_i_keV, n_e_20))
-        P_brem = self.volume_integral(self.sqrtpsin, self._P_brem_rad(self.sqrtpsin, T_e_keV, n_e_20))
-        P_synch = self.volume_integral(self.sqrtpsin, self._P_synch(self.sqrtpsin, T_e_keV, n_e_20))
-        P_imp = self.volume_integral(self.sqrtpsin, self._P_impurity_rad(self.sqrtpsin, T_e_keV, n_e_20))
-        alpha = self.Pheat_alpha
-        K = self.tauE_scalinglaw(1.0, n_e_20*line_average_fac)
-        # Balance P_heat = W_tot / tauE = (W_tot/K) * P_heat^(-alpha)
-        P_heat = (W_tot/K)**(1.0/(1.0+alpha))
-        # P_heat = P_aux + P_OH + P_fusion_heating - P_brem - P_synch
-        P_aux = P_heat - P_ohmic_heating - P_fusion_heating + P_brem + P_synch
+@nb.njit(cache=True)
+def Q_fusion(s, T_i_keV, n_e_20, Paux):
+    """Physical fusion gain factor."""
+    T_e_keV = T_i_keV/s.tipeak_over_tepeak
+    dil = plasma_dilution(s, T_e_keV)
+    n_i_20 = n_e_20*dil
+    P_fusion = volume_integral(s, s.sqrtpsin, _P_fusion(s, s.sqrtpsin, T_i_keV, n_i_20))
+    P_OH = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
+    if Paux == 0:
+        return 9999999.
+    else:
+        return P_fusion/(Paux + P_OH)
 
-        # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
-        # balance equals P_heat. The impurity power is assumed to displace what
-        # would otherwise be conductive/turbulent/instability-driven loss, so it
-        # radiates power away that would otherwise cross the separatrix. Such a
-        # state is not physical; flag it.
-        if P_imp > P_heat:
-            if self.verbosity > 0:
-                print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
-            P_aux = 99999.
 
-        if np.isnan(P_aux):
-            if self.verbosity > 0:
-                print("NaN detected in P_aux_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
-            P_aux = 99999.
+#-----------------------------------------------------------------------
+# Power balance solver
+#-----------------------------------------------------------------------
+
+@nb.njit(cache=True)
+def P_aux_impfrac(s, n_e_20, T_i_keV):
+    """
+    Closed-form power balance solver for the impurity-fraction-fixed mode.
+    """
+    T_e_keV = T_i_keV/s.tipeak_over_tepeak
+    dil = plasma_dilution(s, T_e_keV)
+    n_i_20 = n_e_20*dil
+    line_average_fac = np.average(get_profile(s, s.sqrtpsin, 1))
+    P_fusion_heating = volume_integral(s, s.sqrtpsin, _P_fusion_heating(s, s.sqrtpsin, T_i_keV, n_i_20))
+    P_ohmic_heating = volume_integral(s, s.sqrtpsin, _P_OH_prof(s, s.sqrtpsin, T_e_keV, n_e_20))
+    W_tot = volume_integral(s, s.sqrtpsin, _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))
+    P_brem = volume_integral(s, s.sqrtpsin, _P_brem_rad(s, s.sqrtpsin, T_e_keV, n_e_20))
+    P_synch = volume_integral(s, s.sqrtpsin, _P_synch(s, s.sqrtpsin, T_e_keV, n_e_20))
+    P_imp = volume_integral(s, s.sqrtpsin, _P_impurity_rad(s, s.sqrtpsin, T_e_keV, n_e_20))
+    alpha = s.Pheat_alpha
+    K = tauE_scalinglaw(s, 1.0, n_e_20*line_average_fac)
+    # Balance P_heat = W_tot / tauE = (W_tot/K) * P_heat^(-alpha)
+    P_heat = (W_tot/K)**(1.0/(1.0+alpha))
+    # P_heat = P_aux + P_OH + P_fusion_heating - P_brem - P_synch
+    P_aux = P_heat - P_ohmic_heating - P_fusion_heating + P_brem + P_synch
+
+    # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
+    # balance equals P_heat. The impurity power is assumed to displace what
+    # would otherwise be conductive/turbulent/instability-driven loss, so it
+    # radiates power away that would otherwise cross the separatrix. Such a
+    # state is not physical; flag it.
+    if P_imp > P_heat:
+        if s.verbosity > 0:
+            print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
+        P_aux = 99999.
+
+    if np.isnan(P_aux):
+        if s.verbosity > 0:
+            print("NaN detected in P_aux_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
+        P_aux = 99999.
 
         return P_aux
     #-------------------------------------------------------------------
     # Setup functions
+    #-------------------------------------------------------------------
+
+    def build_state(self):
+        """
+        """
+        def _arr(x):
+            return np.ascontiguousarray(x, dtype=np.float64)
+        s = State(
+            R=np.float64(self.R), a=np.float64(self.a), kappa=np.float64(self.kappa),
+            delta=np.float64(self.delta), B0=np.float64(self.B0), Ip=np.float64(self.Ip),
+            Itot=np.float64(self.Itot), M_i=np.float64(self.M_i),
+            tipeak_over_tepeak=np.float64(self.tipeak_over_tepeak),
+            fuel=int(self.fuel), nr=int(self.nr),
+            sqrtpsin=_arr(self.sqrtpsin), volgrid=_arr(self.volgrid), agrid=_arr(self.agrid),
+            impurityfractions=_arr(self.impurityfractions),
+            rdefined=bool(self.rdefined), volgriddefined=bool(self.volgriddefined),
+            agriddefined=bool(self.agriddefined),
+            jdefined=bool(self._jdefined), nedefined=bool(self._nedefined),
+            nidefined=bool(self._nidefined), Tidefined=bool(self._Tidefined),
+            Tedefined=bool(self._Tedefined), qdefined=bool(self._qdefined),
+            ftrappeddefined=bool(self._ftrappeddefined), extradefined=bool(self._extradefined),
+            j_alpha1=np.float64(self.j_alpha1), j_alpha2=np.float64(self.j_alpha2), j_offset=np.float64(self.j_offset),
+            ne_alpha1=np.float64(self.ne_alpha1), ne_alpha2=np.float64(self.ne_alpha2), ne_offset=np.float64(self.ne_offset),
+            ni_alpha1=np.float64(self.ni_alpha1), ni_alpha2=np.float64(self.ni_alpha2), ni_offset=np.float64(self.ni_offset),
+            Ti_alpha1=np.float64(self.Ti_alpha1), Ti_alpha2=np.float64(self.Ti_alpha2), Ti_offset=np.float64(self.Ti_offset),
+            Te_alpha1=np.float64(self.Te_alpha1), Te_alpha2=np.float64(self.Te_alpha2), Te_offset=np.float64(self.Te_offset),
+            j_prof=_arr(self.j_prof), ne_prof=_arr(self.ne_prof), ni_prof=_arr(self.ni_prof),
+            Te_prof=_arr(self.Te_prof), Ti_prof=_arr(self.Ti_prof), q_prof=_arr(self.q_prof),
+            ftrapped_prof=_arr(self.ftrapped_prof), extraprof=_arr(self.extraprof),
+            H_fac=np.float64(self.H_fac), scaling_const=np.float64(self.scaling_const),
+            M_i_alpha=np.float64(self.M_i_alpha), Ip_alpha=np.float64(self.Ip_alpha),
+            R_alpha=np.float64(self.R_alpha), a_alpha=np.float64(self.a_alpha),
+            kappa_alpha=np.float64(self.kappa_alpha), B0_alpha=np.float64(self.B0_alpha),
+            Pheat_alpha=np.float64(self.Pheat_alpha), n20_alpha=np.float64(self.n20_alpha),
+            resistivity_alg=int(self.resistivity_alg), verbosity=int(self.verbosity),
+            V=np.float64(0.0),
+        )
+        # Precompute V through the identical jitted path used elsewhere.
+        v = volume_integral(s, s.sqrtpsin, np.ones_like(s.sqrtpsin))
+        self.state = s._replace(V=np.float64(v))
+        return self.state
+
+    #-------------------------------------------------------------------
+    # Properties
+    #-------------------------------------------------------------------
+
+    @property
+    def n_GR(self):
+        """Greenwald density in 10^20/m^3."""
+        return self.Ip/(np.pi*self.a**2)
+
+    @property
+    def V(self):
+        """Plasma volume (in last closed flux surface) in m^3."""
+        return self.state.V
+
+    @property
+    def A(self):
+        """Plasma surface area (in last closed flux surface) in m^2."""
+        return self.agrid[-1]
+
+    #-------------------------------------------------------------------
+    # Physics delegators (call the cached free functions on self.state)
+    #-------------------------------------------------------------------
+
+    def get_profile(self, rho, profid):
+        return get_profile(self.state, rho, profid)
+
+    def volume_integral(self, rho, func):
+        return volume_integral(self.state, rho, func)
+
+    def Zeff(self, T_e_keV):
+        return Zeff(self.state, T_e_keV)
+
+    def plasma_dilution(self, T_e_keV):
+        return plasma_dilution(self.state, T_e_keV)
+
+    def eta_NC(self, rho, T_e_keV, n_e_20):
+        return eta_NC(self.state, rho, T_e_keV, n_e_20)
+
+    def Vloop(self, T_e_keV, n_e_20):
+        return Vloop(self.state, T_e_keV, n_e_20)
+
+    def BetaN(self, T_i_keV, n_e_20):
+        return BetaN(self.state, T_i_keV, n_e_20)
+
+    def tauE_scalinglaw(self, Pheat, n_e_20):
+        return tauE_scalinglaw(self.state, Pheat, n_e_20)
+
+    def tauE_H98(self, Pheat, n_e_20):
+        return tauE_H98(self.state, Pheat, n_e_20)
+
+    def tauE_H89(self, Pheat, n_e_20):
+        return tauE_H89(self.state, Pheat, n_e_20)
+
+    def _W_tot_prof(self, rho, T_i_keV, n_e_20):
+        return _W_tot_prof(self.state, rho, T_i_keV, n_e_20)
+
+    def _P_DDpT_prof(self, rho, T_i_keV, n_i_20):
+        return _P_DDpT_prof(self.state, rho, T_i_keV, n_i_20)
+
+    def _P_DDnHe3_prof(self, rho, T_i_keV, n_i_20):
+        return _P_DDnHe3_prof(self.state, rho, T_i_keV, n_i_20)
+
+    def _P_DTnHe4_prof(self, rho, T_i_keV, n_i_20):
+        return _P_DTnHe4_prof(self.state, rho, T_i_keV, n_i_20)
+
+    def _P_fusion_heating(self, rho, T_i_keV, n_i_20):
+        return _P_fusion_heating(self.state, rho, T_i_keV, n_i_20)
+
+    def _P_fusion(self, rho, T_i_keV, n_i_20):
+        return _P_fusion(self.state, rho, T_i_keV, n_i_20)
+
+    def _P_brem_rad(self, rho, T_e_keV, n_e_20):
+        return _P_brem_rad(self.state, rho, T_e_keV, n_e_20)
+
+    def _P_synch(self, rho, T_e_keV, n_e_20):
+        return _P_synch(self.state, rho, T_e_keV, n_e_20)
+
+    def _P_impurity_rad(self, rho, T_e_keV, n_e_20):
+        return _P_impurity_rad(self.state, rho, T_e_keV, n_e_20)
+
+    def _P_rad(self, rho, T_e_keV, n_e_20):
+        return _P_rad(self.state, rho, T_e_keV, n_e_20)
+
+    def _P_OH_prof(self, rho, T_e_keV, n_e_20):
+        return _P_OH_prof(self.state, rho, T_e_keV, n_e_20)
+
+    def Q_fusion(self, T_i_keV, n_e_20, Paux):
+        return Q_fusion(self.state, T_i_keV, n_e_20, Paux)
+
+    def P_aux_impfrac(self, n_e_20, T_i_keV):
+        return P_aux_impfrac(self.state, n_e_20, T_i_keV)
+
+    #-------------------------------------------------------------------
+    # Setup functions (plain Python; mutate instance attributes)
     #-------------------------------------------------------------------
 
     def _addextprof(self, extprofvals, profid):
@@ -859,10 +998,6 @@ class POPCON_algorithms:
             self.Te_offset = offset
         else:
             raise ValueError("Invalid profile ID.")
-    
-    # def _addextprof_imps(self, extprofvals):
-    #     # TODO: implement this
-    #     pass
 
     def _setup_profs(self) -> None:
         """
@@ -899,7 +1034,6 @@ class POPCON_algorithms:
             self.Te_prof = (1-self.Te_offset)*(1-rho**self.Te_alpha1)**self.Te_alpha2 + self.Te_offset
             self._Tedefined = True
         if not self._qdefined:
-            # self.q_a = 2*np.pi*self.a**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self.q_prof = 2*np.pi*(self.a*rho)**2*self.B0*(self.kappa**2+1)/(2*self.R*(4e-7*np.pi)*self.Ip*1e6)
             self._qdefined = True
         if not self._ftrappeddefined:
@@ -1063,8 +1197,13 @@ POPCON_data_spec = [
     ('vloop', nb.float64[:,:]),
     ('betaN', nb.float64[:,:])
 ]
-# jit compiled
-@nb.experimental.jitclass(spec = POPCON_data_spec) # type: ignore
+COMPUTED_FIELDS = [
+    'n_i_20_max', 'n_i_20_avg', 'Pfusion', 'Pfusionheating', 'Pohmic',
+    'Pbrems', 'Psynch', 'Pimprad', 'Prad', 'Pheat', 'Wtot', 'tauE',
+    'Pconf', 'Ploss', 'Pdd', 'Pdt', 'Palpha', 'Psol', 'f_rad', 'Q',
+    'H89', 'H98', 'vloop', 'betaN',
+]
+ComputedOutputs = namedtuple('ComputedOutputs', COMPUTED_FIELDS)
 class POPCON_data:
     """
     Class POPCON_data
@@ -1186,11 +1325,6 @@ class POPCON:
         self.scalinglawfile = scalinglawfile
         
         self.__check_settings()
-        compile_test = POPCON_algorithms()
-        try:
-            compile_test.P_aux_impfrac(1.0, 1.0)
-        except:
-            pass
 
         pass
     
@@ -1220,6 +1354,7 @@ class POPCON:
         self.algorithms.B0_alpha = slparam['B0_alpha']
         self.algorithms.Pheat_alpha = slparam['Pheat_alpha']
         self.algorithms.n20_alpha = slparam['n20_alpha']
+        self.algorithms.build_state()
         if not setuponly:
             self.__solve()
 
@@ -1255,13 +1390,13 @@ class POPCON:
             print("Solving power balance equations")
 
         if self.settings.parallel:
-            Paux = solve_nT_par(params, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.accel, 
+            Paux = solve_nT_par(params.state, self.settings.Nn, self.settings.NTi,
+                                    n_e_20, T_i_keV, self.settings.accel,
                                     self.settings.err, self.settings.maxit,
                                     self.settings.verbosity)
         else:
-            Paux = solve_nT(params, self.settings.Nn, self.settings.NTi,
-                                    n_e_20, T_i_keV, self.settings.accel, 
+            Paux = solve_nT(params.state, self.settings.Nn, self.settings.NTi,
+                                    n_e_20, T_i_keV, self.settings.accel,
                                     self.settings.err, self.settings.maxit,
                                     self.settings.verbosity)
 
@@ -1269,34 +1404,14 @@ class POPCON:
         if self.settings.verbosity > 0:
             print("Power balance solutions found. Populating output arrays.")
         self.output.Paux = Paux
-        self.output.n_i_20_avg = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.n_i_20_max = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pfusion = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pfusionheating = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pohmic = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pbrems = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Psynch = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pimprad = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Prad = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pheat = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Wtot = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.tauE = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pconf = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Ploss = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pdd = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Pdt = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Palpha = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Psol = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.f_rad = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.Q = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.H89 = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.H98 = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.vloop = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
-        self.output.betaN = -1*np.ones((self.settings.Nn,self.settings.NTi),dtype=np.float64)
         if self.settings.parallel:
-            self.output = populate_outputs_par(params, self.output, self.settings.Nn, self.settings.NTi, self.settings.verbosity)
+            computed = populate_outputs_par(params.state, n_e_20, T_i_keV, T_e_keV, Paux,
+                                            self.settings.Nn, self.settings.NTi, self.settings.verbosity)
         else:
-            self.output = populate_outputs(params, self.output, self.settings.Nn, self.settings.NTi, self.settings.verbosity)
+            computed = populate_outputs(params.state, n_e_20, T_i_keV, T_e_keV, Paux,
+                                        self.settings.Nn, self.settings.NTi, self.settings.verbosity)
+        for name in computed._fields:
+            setattr(self.output, name, getattr(computed, name))
 
         pass
 
@@ -1809,7 +1924,7 @@ betaN = {betaN:.3f}
                 self.algorithms.kappa = geq_kappa
             if np.abs(geq_delta/self.settings.delta - 1) > 0.1:
                 print(f"Warning: gEQDSK triangularity ({geq_delta}) differs significantly from settings delta ({self.settings.delta}). Defaulting to gEQDSK value.")
-                self.settings.delta
+                self.settings.delta = geq_delta
                 self.algorithms.delta = geq_delta
             if np.abs(Ipint/self.settings.Ip - 1) > 0.1:
                 print(f"Warning: gEQDSK Ip ({Ipint}) differs significantly from settings Ip ({self.settings.Ip}). Defaulting to gEQDSK value.")
@@ -1839,10 +1954,9 @@ betaN = {betaN:.3f}
             self.plotsettings = POPCON_plotsettings(self.plotsettingsfile)
         pass
 
-# @conditional_njit(enable=self.settings.parallel,parallel=self.settings.parallel)
-@nb.njit(parallel=True)
-def solve_nT_par(params:POPCON_algorithms, nn:int, nT:int,
-                n_e_20:np.ndarray, T_i_keV:np.ndarray, 
+@nb.njit(parallel=True, cache=True)
+def solve_nT_par(state, nn:int, nT:int,
+                n_e_20:np.ndarray, T_i_keV:np.ndarray,
                 accel:float=1.2, err:float=1e-5,
                 maxit:int=1000, verbosity=1):
     """
@@ -1857,13 +1971,13 @@ def solve_nT_par(params:POPCON_algorithms, nn:int, nT:int,
             if verbosity > 1:
                 print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
-            Paux[i,j] = params.P_aux_impfrac(n_e_20[i], T_i_keV[j])
-            
+            Paux[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
+
     return Paux
 
-@nb.njit(parallel=False)
-def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
-                n_e_20:np.ndarray, T_i_keV:np.ndarray, 
+@nb.njit(parallel=False, cache=True)
+def solve_nT(state, nn:int, nT:int,
+                n_e_20:np.ndarray, T_i_keV:np.ndarray,
                 accel:float=1.2, err:float=1e-5,
                 maxit:int=1000, verbosity=1):
     """
@@ -1878,92 +1992,147 @@ def solve_nT(params:POPCON_algorithms, nn:int, nT:int,
             if verbosity > 1:
                 print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
-            Paux[i,j] = params.P_aux_impfrac(n_e_20[i], T_i_keV[j])
+            Paux[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
             
     return Paux
 
 
-@nb.njit(parallel=True)
-def populate_outputs_par(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verbosity=1):
+@nb.njit(parallel=True, cache=True)
+def populate_outputs_par(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, verbosity=1):
     """
     Compiling this function is handy as it allows for 
     parallelization of the most computationally expensive
     part of the code.
     """
-    rho = params.sqrtpsin
-    line_average_fac = np.average(params.get_profile(rho, 1))
+    rho = state.sqrtpsin
+    line_average_fac = np.average(get_profile(state, rho, 1))
+    n_i_20_max = np.empty((Nn,NTi),dtype=np.float64)
+    n_i_20_avg = np.empty((Nn,NTi),dtype=np.float64)
+    Pfusion = np.empty((Nn,NTi),dtype=np.float64)
+    Pfusionheating = np.empty((Nn,NTi),dtype=np.float64)
+    Pohmic = np.empty((Nn,NTi),dtype=np.float64)
+    Pbrems = np.empty((Nn,NTi),dtype=np.float64)
+    Psynch = np.empty((Nn,NTi),dtype=np.float64)
+    Pimprad = np.empty((Nn,NTi),dtype=np.float64)
+    Prad = np.empty((Nn,NTi),dtype=np.float64)
+    Pheat = np.empty((Nn,NTi),dtype=np.float64)
+    Wtot = np.empty((Nn,NTi),dtype=np.float64)
+    tauE = np.empty((Nn,NTi),dtype=np.float64)
+    Pconf = np.empty((Nn,NTi),dtype=np.float64)
+    Ploss = np.empty((Nn,NTi),dtype=np.float64)
+    Pdd = np.empty((Nn,NTi),dtype=np.float64)
+    Pdt = np.empty((Nn,NTi),dtype=np.float64)
+    Palpha = np.empty((Nn,NTi),dtype=np.float64)
+    Psol = np.empty((Nn,NTi),dtype=np.float64)
+    f_rad = np.empty((Nn,NTi),dtype=np.float64)
+    Q = np.empty((Nn,NTi),dtype=np.float64)
+    H89 = np.empty((Nn,NTi),dtype=np.float64)
+    H98 = np.empty((Nn,NTi),dtype=np.float64)
+    vloop = np.empty((Nn,NTi),dtype=np.float64)
+    betaN = np.empty((Nn,NTi),dtype=np.float64)
     for i in nb.prange(Nn):
         for j in nb.prange(NTi):
             if verbosity > 1:
-                print("Populating n20=",result.n_e_20_max[i],", T=",result.T_i_max[j]," keV")
-            dil = params.plasma_dilution(result.T_e_max[j])
-            result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
-            result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
-            result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Prad[i,j] = result.Pbrems[i,j] + result.Pimprad[i,j] + result.Psynch[i,j]
-            result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
-            result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
-            result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-            result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
-            result.Ploss[i,j] = result.Pconf[i,j]
-            result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Palpha[i,j] = result.Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
-            result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
-            result.f_rad[i,j] = result.Prad[i,j] / result.Ploss[i,j]
-            result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
-            result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-            result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-            result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
-            result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
-    return result
+                print("Populating n20=",n_e_20_max[i],", T=",T_i_max[j]," keV")
+            dil = plasma_dilution(state, T_e_max[j])
+            n_i_20_max[i,j] = n_e_20_max[i]*dil
+            n_i_20_avg[i,j] = n_i_20_max[i,j]*volume_integral(state, rho,get_profile(state, rho, 2))/state.V
+            Pfusion[i,j] = volume_integral(state, rho,_P_fusion(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pfusionheating[i,j] = volume_integral(state, rho,_P_fusion_heating(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pohmic[i,j] = volume_integral(state, rho,_P_OH_prof(state, rho, T_e_max[j], n_e_20_max[i]))
+            Pbrems[i,j] = volume_integral(state, rho,_P_brem_rad(state, rho, T_e_max[j], n_e_20_max[i]))
+            Psynch[i,j] = volume_integral(state, rho,_P_synch(state, rho, T_e_max[j], n_e_20_max[i]))
+            Pimprad[i,j] = volume_integral(state, rho,_P_impurity_rad(state, rho, T_e_max[j], n_e_20_max[i]))
+            Prad[i,j] = Pbrems[i,j] + Pimprad[i,j] + Psynch[i,j]
+            Pheat[i,j] = Pfusionheating[i,j] + Pohmic[i,j] + Paux[i,j] - Pbrems[i,j]
+            Wtot[i,j] = volume_integral(state, rho,_W_tot_prof(state, rho,T_i_max[j],n_e_20_max[i]))
+            tauE[i,j] = tauE_scalinglaw(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
+            Pconf[i,j] = Wtot[i,j]/tauE[i,j]
+            Ploss[i,j] = Pconf[i,j]
+            Pdd[i,j] = volume_integral(state, rho,_P_DDnHe3_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pdd[i,j] += volume_integral(state, rho,_P_DDpT_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pdt[i,j] = volume_integral(state, rho,_P_DTnHe4_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Palpha[i,j] = Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
+            Psol[i,j] = Ploss[i,j] - Prad[i,j]
+            f_rad[i,j] = Prad[i,j] / Ploss[i,j]
+            Q[i,j] = Q_fusion(state, T_i_max[j], n_e_20_max[i], Paux[i,j])
+            H89[i,j] = tauE[i,j]/tauE_H89(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
+            H98[i,j] = tauE[i,j]/tauE_H98(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
+            vloop[i,j] = Vloop(state, T_e_max[j], n_e_20_max[i])
+            betaN[i,j] = 100*BetaN(state, T_i_max[j], n_e_20_max[i]) # in percent
+    return ComputedOutputs(n_i_20_max, n_i_20_avg, Pfusion, Pfusionheating, Pohmic,
+                           Pbrems, Psynch, Pimprad, Prad, Pheat, Wtot, tauE,
+                           Pconf, Ploss, Pdd, Pdt, Palpha, Psol, f_rad, Q,
+                           H89, H98, vloop, betaN)
 
-@nb.njit(parallel=False)
-def populate_outputs(params:POPCON_algorithms, result:POPCON_data, Nn, NTi, verbosity=1):
+
+@nb.njit(parallel=False, cache=True)
+def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi, verbosity=1):
     """
     Compiling this function is handy as it allows for 
     parallelization of the most computationally expensive
     part of the code.
     """
-    rho = params.sqrtpsin
-    line_average_fac = np.average(params.get_profile(rho, 1))
+    rho = state.sqrtpsin
+    line_average_fac = np.average(get_profile(state, rho, 1))
+    n_i_20_max = np.empty((Nn,NTi),dtype=np.float64)
+    n_i_20_avg = np.empty((Nn,NTi),dtype=np.float64)
+    Pfusion = np.empty((Nn,NTi),dtype=np.float64)
+    Pfusionheating = np.empty((Nn,NTi),dtype=np.float64)
+    Pohmic = np.empty((Nn,NTi),dtype=np.float64)
+    Pbrems = np.empty((Nn,NTi),dtype=np.float64)
+    Psynch = np.empty((Nn,NTi),dtype=np.float64)
+    Pimprad = np.empty((Nn,NTi),dtype=np.float64)
+    Prad = np.empty((Nn,NTi),dtype=np.float64)
+    Pheat = np.empty((Nn,NTi),dtype=np.float64)
+    Wtot = np.empty((Nn,NTi),dtype=np.float64)
+    tauE = np.empty((Nn,NTi),dtype=np.float64)
+    Pconf = np.empty((Nn,NTi),dtype=np.float64)
+    Ploss = np.empty((Nn,NTi),dtype=np.float64)
+    Pdd = np.empty((Nn,NTi),dtype=np.float64)
+    Pdt = np.empty((Nn,NTi),dtype=np.float64)
+    Palpha = np.empty((Nn,NTi),dtype=np.float64)
+    Psol = np.empty((Nn,NTi),dtype=np.float64)
+    f_rad = np.empty((Nn,NTi),dtype=np.float64)
+    Q = np.empty((Nn,NTi),dtype=np.float64)
+    H89 = np.empty((Nn,NTi),dtype=np.float64)
+    H98 = np.empty((Nn,NTi),dtype=np.float64)
+    vloop = np.empty((Nn,NTi),dtype=np.float64)
+    betaN = np.empty((Nn,NTi),dtype=np.float64)
     for i in nb.prange(Nn):
         for j in nb.prange(NTi):
             if verbosity > 1:
-                print("Populating n20=",result.n_e_20_max[i],", T=",result.T_i_max[j]," keV")
-            dil = params.plasma_dilution(result.T_e_max[j])
-            result.n_i_20_max[i,j] = result.n_e_20_max[i]*dil
-            result.n_i_20_avg[i,j] = result.n_i_20_max[i,j]*params.volume_integral(rho,params.get_profile(rho, 2))/params.V
-            result.Pfusion[i,j] = params.volume_integral(rho,params._P_fusion(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pfusionheating[i,j] = params.volume_integral(rho,params._P_fusion_heating(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pohmic[i,j] = params.volume_integral(rho,params._P_OH_prof(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Pbrems[i,j] = params.volume_integral(rho,params._P_brem_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Psynch[i,j] = params.volume_integral(rho,params._P_synch(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Pimprad[i,j] = params.volume_integral(rho,params._P_impurity_rad(rho, result.T_e_max[j], result.n_e_20_max[i]))
-            result.Prad[i,j] = result.Pbrems[i,j] + result.Pimprad[i,j] + result.Psynch[i,j]
-            result.Pheat[i,j] = result.Pfusionheating[i,j] + result.Pohmic[i,j] + result.Paux[i,j] - result.Pbrems[i,j]
-            result.Wtot[i,j] = params.volume_integral(rho,params._W_tot_prof(rho,result.T_i_max[j],result.n_e_20_max[i]))
-            result.tauE[i,j] = params.tauE_scalinglaw(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-            result.Pconf[i,j] = result.Wtot[i,j]/result.tauE[i,j]
-            result.Ploss[i,j] = result.Pconf[i,j]
-            result.Pdd[i,j] = params.volume_integral(rho,params._P_DDnHe3_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pdd[i,j] += params.volume_integral(rho,params._P_DDpT_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Pdt[i,j] = params.volume_integral(rho,params._P_DTnHe4_prof(rho, result.T_i_max[j], result.n_i_20_max[i,j]))
-            result.Palpha[i,j] = result.Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
-            result.Psol[i,j] = result.Ploss[i,j] - result.Prad[i,j]
-            result.f_rad[i,j] = result.Prad[i,j] / result.Ploss[i,j]
-            result.Q[i,j] = params.Q_fusion(result.T_i_max[j], result.n_e_20_max[i], result.Paux[i,j])
-            result.H89[i,j] = result.tauE[i,j]/params.tauE_H89(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-            result.H98[i,j] = result.tauE[i,j]/params.tauE_H98(result.Pheat[i,j], result.n_e_20_max[i]*line_average_fac)
-            result.vloop[i,j] = params.Vloop(result.T_e_max[j], result.n_e_20_max[i])
-            result.betaN[i,j] = 100*params.BetaN(result.T_i_max[j], result.n_e_20_max[i]) # in percent
-    return result
+                print("Populating n20=",n_e_20_max[i],", T=",T_i_max[j]," keV")
+            dil = plasma_dilution(state, T_e_max[j])
+            n_i_20_max[i,j] = n_e_20_max[i]*dil
+            n_i_20_avg[i,j] = n_i_20_max[i,j]*volume_integral(state, rho,get_profile(state, rho, 2))/state.V
+            Pfusion[i,j] = volume_integral(state, rho,_P_fusion(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pfusionheating[i,j] = volume_integral(state, rho,_P_fusion_heating(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pohmic[i,j] = volume_integral(state, rho,_P_OH_prof(state, rho, T_e_max[j], n_e_20_max[i]))
+            Pbrems[i,j] = volume_integral(state, rho,_P_brem_rad(state, rho, T_e_max[j], n_e_20_max[i]))
+            Psynch[i,j] = volume_integral(state, rho,_P_synch(state, rho, T_e_max[j], n_e_20_max[i]))
+            Pimprad[i,j] = volume_integral(state, rho,_P_impurity_rad(state, rho, T_e_max[j], n_e_20_max[i]))
+            Prad[i,j] = Pbrems[i,j] + Pimprad[i,j] + Psynch[i,j]
+            Pheat[i,j] = Pfusionheating[i,j] + Pohmic[i,j] + Paux[i,j] - Pbrems[i,j]
+            Wtot[i,j] = volume_integral(state, rho,_W_tot_prof(state, rho,T_i_max[j],n_e_20_max[i]))
+            tauE[i,j] = tauE_scalinglaw(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
+            Pconf[i,j] = Wtot[i,j]/tauE[i,j]
+            Ploss[i,j] = Pconf[i,j]
+            Pdd[i,j] = volume_integral(state, rho,_P_DDnHe3_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pdd[i,j] += volume_integral(state, rho,_P_DDpT_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Pdt[i,j] = volume_integral(state, rho,_P_DTnHe4_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
+            Palpha[i,j] = Pdt[i,j] * 3.52e3/(3.52e3 + 14.06e3)
+            Psol[i,j] = Ploss[i,j] - Prad[i,j]
+            f_rad[i,j] = Prad[i,j] / Ploss[i,j]
+            Q[i,j] = Q_fusion(state, T_i_max[j], n_e_20_max[i], Paux[i,j])
+            H89[i,j] = tauE[i,j]/tauE_H89(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
+            H98[i,j] = tauE[i,j]/tauE_H98(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
+            vloop[i,j] = Vloop(state, T_e_max[j], n_e_20_max[i])
+            betaN[i,j] = 100*BetaN(state, T_i_max[j], n_e_20_max[i]) # in percent
+    return ComputedOutputs(n_i_20_max, n_i_20_avg, Pfusion, Pfusionheating, Pohmic,
+                           Pbrems, Psynch, Pimprad, Prad, Pheat, Wtot, tauE,
+                           Pconf, Ploss, Pdd, Pdt, Palpha, Psol, f_rad, Q,
+                           H89, H98, vloop, betaN)
 
 class POPCON_scan(POPCON):
     """
