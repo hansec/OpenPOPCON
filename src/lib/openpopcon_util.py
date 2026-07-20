@@ -141,7 +141,7 @@ def get_fluxvolumes(gEQDSK: dict, Npsi: int = 50):
         # Get the surface area of the flux surface
         d = np.diff(contour, axis=0)
         ds = np.sqrt(d[:, 0]**2 + d[:, 1]**2)
-        Agrid[icontour] = np.trapz(2*np.pi*contour[:-1,0] * ds, axis=0)
+        Agrid[icontour] = np.trapezoid(2*np.pi*contour[:-1,0] * ds, axis=0)
 
     return psin, Volgrid, Agrid, closed_fluxsurfaces
 

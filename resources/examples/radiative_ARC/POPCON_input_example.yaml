@@ -26,7 +26,6 @@ B_0: 11.5 # on-axis magnetic field in Tesla
 #----------------------
 
 #----------------------
-M_i: 2.5 # average ion mass in amu
 tipeak_over_tepeak: 1.1 # ratio of ion to electron temperature at peak
 fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
 #----------------------

@@ -1,11 +1,13 @@
 # run: conda env create --file environment.yml
-name: openPOPCON
+name: openpopcon
+channels:
+- conda-forge
 dependencies:
-- python=3.10
-- anaconda
+- python>=3.10,<3.14
 - pip
-- numpy
+- numpy>=2.0
 - scipy
 - matplotlib
 - numba
 - pyyaml
+- jupyterlab

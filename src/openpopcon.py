@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import yaml
 import json
+import os
 from .lib.openpopcon_util import *
 import numba as nb
 from collections import namedtuple
@@ -29,6 +30,35 @@ from .lib import phys_lib as phys
 import shutil
 import datetime
 from .lib import neat_json_encoder as nj
+
+# resistivity_model in the settings file -> resistivity_alg on the State
+RESISTIVITY_MODELS = {"jardin": 0, "paz-soldan": 1, "maximum": 2, "max": 2}
+
+# why a grid point has no physical solution. P_aux is set to 99999 for all of
+# these; the flag survives so the reason can be reported
+INVALID_OK = 0
+INVALID_IMPRAD = 1
+INVALID_NAN = 2
+INVALID_REASONS = {
+    INVALID_IMPRAD: "impurity radiation exceeds the confinement loss",
+    INVALID_NAN: "no real solution to power balance",
+}
+
+# every key POPCON_settings.read understands; anything else in a settings file
+# is ignored, so it gets reported as a likely typo
+KNOWN_SETTINGS_KEYS = {
+    'name', 'R', 'a', 'kappa', 'delta',
+    'B_0', 'B_coil', 'wall_thickness', 'I_P', 'qstar',
+    'tipeak_over_tepeak', 'fuel', 'impurityfractions', 'Zeff_target', 'impurity',
+    'scalinglaw', 'H_fac', 'nr', 'gfilename', 'profsfilename',
+    'j_alpha1', 'j_alpha2', 'j_offset',
+    'ne_alpha1', 'ne_alpha2', 'ne_offset',
+    'ni_alpha1', 'ni_alpha2', 'ni_offset',
+    'Ti_alpha1', 'Ti_alpha2', 'Ti_offset',
+    'Te_alpha1', 'Te_alpha2', 'Te_offset',
+    'Nn', 'NTi', 'nmax_frac', 'nmin_frac', 'Tmax_keV', 'Tmin_keV',
+    'resistivity_model', 'maxit', 'accel', 'err', 'verbosity', 'parallel',
+}
 
 DEFAULT_PLOTSETTINGS = get_POPCON_homedir(['resources','default_plotsettings.yml'])
 DEFAULT_SCALINGLAWS = get_POPCON_homedir(['resources','scalinglaws.yml'])
@@ -137,7 +167,7 @@ def volume_integral(s, rho, func) -> float:
     # NOTE: profile must be an array of the same length as rho.
     # Integrates functions of rho dV-like
     V_interp = np.interp(rho, s.sqrtpsin, s.volgrid)
-    return np.trapz(func, V_interp)
+    return np.trapezoid(func, V_interp)
     
 #-------------------------------------------------------------------
 # Physical Quantities
@@ -513,6 +543,10 @@ def Q_fusion(s, T_i_keV:float, n_e_20:float, Paux:float) -> float:
 def P_aux_impfrac(s, n_e_20, T_i_keV):
     """
     Closed-form power balance solver for the impurity-fraction-fixed mode.
+
+    Returns (P_aux, flag), where flag is INVALID_OK, INVALID_IMPRAD or
+    INVALID_NAN. The caller reports these in aggregate; printing per point
+    would be one line per grid cell, out of order under prange.
     """
     T_e_keV = T_i_keV/s.tipeak_over_tepeak
     dil = plasma_dilution(s, T_e_keV)
@@ -531,22 +565,22 @@ def P_aux_impfrac(s, n_e_20, T_i_keV):
     # P_heat = P_aux + P_OH + P_fusion_heating - P_brem - P_synch
     P_aux = P_heat - P_ohmic_heating - P_fusion_heating + P_brem + P_synch
 
+    flag = INVALID_OK
+
     # P_SOL < 0: impurity radiation exceeds the confinement loss, which at
     # balance equals P_heat. The impurity power is assumed to displace what
     # would otherwise be conductive/turbulent/instability-driven loss, so it
     # radiates power away that would otherwise cross the separatrix. Such a
     # state is not physical; flag it.
     if P_imp > P_heat:
-        if s.verbosity > 0:
-            print(f"Warning: Impurity radiation exceeds confinement loss. State n20=", n_e_20, "T=" , T_i_keV , "is not physical.")
         P_aux = 99999.
+        flag = INVALID_IMPRAD
 
     if np.isnan(P_aux):
-        if s.verbosity > 0:
-            print("NaN detected in P_aux_impfrac. State n20=", n_e_20, "T=" , T_i_keV , "keV.")
         P_aux = 99999.
+        flag = INVALID_NAN
 
-    return P_aux
+    return P_aux, flag
 
 # NOT jit compiled
 class POPCON_algorithms:
@@ -860,7 +894,7 @@ class POPCON_algorithms:
         return Q_fusion(self.state, T_i_keV, n_e_20, Paux)
 
     def P_aux_impfrac(self, n_e_20, T_i_keV):
-        return P_aux_impfrac(self.state, n_e_20, T_i_keV)
+        return P_aux_impfrac(self.state, n_e_20, T_i_keV)[0]
 
     #-------------------------------------------------------------------
     # Setup functions
@@ -1033,6 +1067,17 @@ class POPCON_settings:
         self.read(filename)
         pass
 
+    def _resolve(self, path: str) -> str:
+        """
+        Resolves a filename given in the settings file against the directory
+        that settings file lives in. '' means "not specified" and is left
+        alone, as are absolute paths, so that read_output can hand back
+        absolute paths without them being mangled.
+        """
+        if path == '' or os.path.isabs(path):
+            return path
+        return os.path.normpath(os.path.join(self.settingsdir, path))
+
     def read(self, filename: str) -> None:
         """
         Reads a YAML file and sets the settings.
@@ -1042,6 +1087,10 @@ class POPCON_settings:
                 data = yaml.safe_load(f)
         else:
             raise ValueError('Filename must end with .yaml or .yml')
+
+        self.settingsfile = os.path.abspath(filename)
+        self.settingsdir = os.path.dirname(self.settingsfile)
+        self.rawkeys = set(data.keys())
 
         try:
             #-----------------------------------------------------------
@@ -1074,8 +1123,14 @@ class POPCON_settings:
             if self.fuel == 3:
                 raise ValueError("D-He3 fuel cycle not implemented yet. Please use D-D or D-T.")
             self.impurityfractions = np.array(data['impurityfractions'], dtype=np.float64)
+            if self.impurityfractions.shape != (6,):
+                raise ValueError(f"impurityfractions must have 6 entries "
+                                 f"(He, Ne, Ar, Kr, Xe, W), got {self.impurityfractions.size}.")
             if 'Zeff_target' in data and 'impurity' in data:
                 impurity = int(data['impurity'])
+                if not 0 <= impurity <= 5:
+                    raise ValueError(f"impurity must be 0-5 "
+                                     f"(0 He, 1 Ne, 2 Ar, 3 Kr, 4 Xe, 5 W), got {impurity}.")
                 self.impurityfractions[impurity] = phys.get_impurity_fraction(data['Zeff_target'], self.impurityfractions[0], impurity, (float(data['Tmax_keV'])-float(data['Tmin_keV']))/2+float(data['Tmin_keV']))
                 print(f"Impurity fractions = {self.impurityfractions} calculated from Zeff_target.")
 
@@ -1095,8 +1150,8 @@ class POPCON_settings:
             self.H_fac = float(data['H_fac'])
             self.nr = int(data['nr'])
 
-            self.gfilename = str(safe_get(data,'gfilename',''))
-            self.profsfilename = str(safe_get(data,'profsfilename',''))
+            self.gfilename = self._resolve(str(safe_get(data,'gfilename','')))
+            self.profsfilename = self._resolve(str(safe_get(data,'profsfilename','')))
 
             self.j_alpha1 = float(safe_get(data,'j_alpha1',1))
             self.j_alpha2 = float(safe_get(data,'j_alpha2',2))
@@ -1318,6 +1373,8 @@ class POPCON:
         Wrapper function that sets up and solves the power balance 
         equations at each point in the grid.
         """
+
+        self.__check_settings()
         self.__setup_params()
         self.__get_geometry()
         self.__get_profiles()
@@ -1371,12 +1428,12 @@ class POPCON:
             print("Solving power balance equations")
 
         if self.settings.parallel:
-            Paux = solve_nT_par(params.state, self.settings.Nn, self.settings.NTi,
+            Paux, flags = solve_nT_par(params.state, self.settings.Nn, self.settings.NTi,
                                     n_e_20, T_i_keV, self.settings.accel,
                                     self.settings.err, self.settings.maxit,
                                     self.settings.verbosity)
         else:
-            Paux = solve_nT(params.state, self.settings.Nn, self.settings.NTi,
+            Paux, flags = solve_nT(params.state, self.settings.Nn, self.settings.NTi,
                                     n_e_20, T_i_keV, self.settings.accel,
                                     self.settings.err, self.settings.maxit,
                                     self.settings.verbosity)
@@ -1384,6 +1441,7 @@ class POPCON:
 
         if self.settings.verbosity > 0:
             print("Power balance solutions found. Populating output arrays.")
+            self.__report_invalid(flags)
         self.output.Paux = Paux
         if self.settings.parallel:
             computed = populate_outputs_par(params.state, n_e_20, T_i_keV, T_e_keV, Paux,
@@ -1395,6 +1453,23 @@ class POPCON:
             setattr(self.output, name, getattr(computed, name))
 
         pass
+
+    def __report_invalid(self, flags) -> None:
+        """
+        Says how much of the grid has no physical solution, and why. These
+        points are set to P_aux = 99999 and masked out of the plot.
+        """
+        total = flags.size
+        ninvalid = int(np.count_nonzero(flags))
+        if ninvalid == 0:
+            print(f"All {total} grid points solved.")
+            return
+        print(f"{ninvalid} of {total} grid points ({100*ninvalid/total:.1f}%) "
+              f"have no physical solution and are masked in the plot:")
+        for code, reason in INVALID_REASONS.items():
+            n = int(np.count_nonzero(flags == code))
+            if n:
+                print(f"  {n:>6d}  {reason}")
 
     def single_point(self, n_G_frac:float, Ti_av:float, plot:bool=True, show:bool=True) -> None:
         """
@@ -1418,8 +1493,11 @@ class POPCON:
         n_i_20 = n_e_20*dil
         line_avg_fac = np.average(self.algorithms.get_profile(rho, 1))
 
-        Paux = self.algorithms.P_aux_impfrac(n_e_20,T_i_keV)
-        
+        Paux, invalid = P_aux_impfrac(self.algorithms.state, n_e_20, T_i_keV)
+        if invalid:
+            print(f"This point has no physical solution: {INVALID_REASONS[invalid]}. "
+                  f"The numbers below are not meaningful.")
+
         Pfusion = self.algorithms.volume_integral(rho,self.algorithms._P_fusion(rho, T_i_keV, n_i_20))
         Pfusion_heating = self.algorithms.volume_integral(rho,self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20))
         Pohmic = self.algorithms.volume_integral(rho,self.algorithms._P_OH_prof(rho, T_e_keV, n_e_20))
@@ -1557,8 +1635,16 @@ betaN = {betaN:.3f}
             raise ValueError("Invalid y-axis. Change yax in plotsettings.")
         xx, yy = np.meshgrid(xx,yy)
         mask = np.logical_or(np.isnan(self.output.Paux),self.output.Paux >=99998.)
+        if mask.all():
+            raise ValueError(
+                "No point in this scan has a physical solution, so there is nothing "
+                "to plot. Re-run with verbosity > 0 to see why, and try a smaller "
+                "impurity fraction or a different density/temperature range.")
         if self.plotsettings.fill_invalid:
             ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=np.logical_not(mask)),levels=[0,2],colors='k',alpha=0.5)
+            if mask.any():
+                ax.add_patch(patches.Rectangle((0,0),0,0,fc='k',alpha=0.5,
+                                               label='No physical solution'))
         if np.any(self.output.Q > 1e4):
             maskburning = np.logical_not(np.logical_or(np.isnan(self.output.Q),self.output.Q >=1e4))
             ax.contourf(xx,yy,np.ma.array(np.ones_like(xx),mask=maskburning),levels=[0,2],colors='r',alpha=0.08)
@@ -1690,13 +1776,13 @@ betaN = {betaN:.3f}
         direxists = outputsdir.joinpath(name).exists()
         zipexists = outputsdir.joinpath(name + '.zip').exists()
         if not (direxists or zipexists):
-            outputsdir.joinpath(name).mkdir()
+            outputsdir.joinpath(name).mkdir(parents=True)
         elif overwrite:
                 if zipexists:
                     outputsdir.joinpath(name + '.zip').unlink()
                 if direxists:
                     shutil.rmtree(outputsdir.joinpath(name))
-                outputsdir.joinpath(name).mkdir()
+                outputsdir.joinpath(name).mkdir(parents=True)
         else:
             raise ValueError(f"{'Archive'*zipexists}{' and '*zipexists*direxists}{'Directory'*direxists} already exist{'s'*(not (direxists and zipexists))}. Set overwrite=True to overwrite.")
         
@@ -1737,7 +1823,7 @@ betaN = {betaN:.3f}
             outputsdir = pathlib.Path(directory)
 
         if name.endswith('.zip'):
-            outputsdir.joinpath(name[:-4]).mkdir()
+            outputsdir.joinpath(name[:-4]).mkdir(parents=True)
             shutil.unpack_archive(outputsdir.joinpath(name), outputsdir.joinpath(name[:-4]))
             name = name[:-4]
         namepath = outputsdir.joinpath(name)
@@ -1776,8 +1862,6 @@ betaN = {betaN:.3f}
 
     def __setup_params(self) -> None:
 
-        res_dict = {"jardin": 0, "paz-soldan": 1, "maximum":2, "max":2}
-
         self.algorithms = POPCON_algorithms()
         self.algorithms.R = self.settings.R
         self.algorithms.a = self.settings.a
@@ -1790,7 +1874,7 @@ betaN = {betaN:.3f}
         self.algorithms.fuel = self.settings.fuel
         self.algorithms.impurityfractions = self.settings.impurityfractions
         self.algorithms.verbosity = self.settings.verbosity
-        self.algorithms.resistivity_alg = res_dict[self.settings.resistivity_model.lower()]
+        self.algorithms.resistivity_alg = RESISTIVITY_MODELS[self.settings.resistivity_model.lower()]
 
     def __get_profiles(self) -> None:
         if self.settings.profsfilename == '':
@@ -1850,8 +1934,8 @@ betaN = {betaN:.3f}
 
 
 
-            Ipint = np.abs(np.trapz(y=jtoravg, x=cross_sec_areas))/1e6
-            Jrmsint = np.abs(np.trapz(y=jrms, x=cross_sec_areas))
+            Ipint = np.abs(np.trapezoid(y=jtoravg, x=cross_sec_areas))/1e6
+            Jrmsint = np.abs(np.trapezoid(y=jrms, x=cross_sec_areas))
             Jrms_norm = jrms/Jrmsint
 
 
@@ -1923,9 +2007,77 @@ betaN = {betaN:.3f}
 
     def __check_settings(self) -> None:
         """
-        Checks the settings for consistency.
+        Checks the settings for consistency. Collects everything that is wrong
+        and raises once, so that a settings file with several mistakes in it
+        reports all of them rather than one per run. Anything suspicious but
+        legal is printed as a warning instead.
         """
-        pass
+        if not hasattr(self, 'settings'):
+            return
+        s = self.settings
+        bad = []
+        warn = []
+
+        # names that must match something the code knows about
+        if s.scalinglaw not in self.scalinglaws:
+            bad.append(f"scalinglaw '{s.scalinglaw}' is not defined. "
+                       f"Available: {', '.join(sorted(self.scalinglaws))}.")
+        if s.resistivity_model.lower() not in RESISTIVITY_MODELS:
+            bad.append(f"resistivity_model '{s.resistivity_model}' is not recognized. "
+                       f"Available: {', '.join(sorted(RESISTIVITY_MODELS))}.")
+
+        # scan limits
+        if s.Tmin_keV >= s.Tmax_keV:
+            bad.append(f"Tmin_keV ({s.Tmin_keV}) must be less than Tmax_keV ({s.Tmax_keV}).")
+        if s.nmin_frac >= s.nmax_frac:
+            bad.append(f"nmin_frac ({s.nmin_frac}) must be less than nmax_frac ({s.nmax_frac}).")
+        if s.Tmin_keV <= 0:
+            bad.append(f"Tmin_keV must be positive, got {s.Tmin_keV}.")
+        if s.nmin_frac <= 0:
+            bad.append(f"nmin_frac must be positive, got {s.nmin_frac}.")
+
+        # grid resolution
+        for key in ('Nn', 'NTi', 'nr'):
+            if getattr(s, key) < 2:
+                bad.append(f"{key} must be at least 2, got {getattr(s, key)}.")
+
+        # machine geometry
+        for key in ('R', 'a', 'kappa', 'tipeak_over_tepeak', 'H_fac'):
+            if getattr(s, key) <= 0:
+                bad.append(f"{key} must be positive, got {getattr(s, key)}.")
+        if s.a >= s.R:
+            bad.append(f"minor radius a ({s.a} m) must be smaller than major radius R ({s.R} m).")
+        if abs(s.delta) >= 1:
+            bad.append(f"delta (triangularity) must be between -1 and 1, got {s.delta}.")
+        if s.B0 == 0:
+            bad.append("B_0 must be nonzero.")
+        if s.Ip == 0:
+            bad.append("I_P must be nonzero.")
+
+        # composition
+        impsum = float(np.sum(s.impurityfractions))
+        if not 0 <= impsum < 1:
+            shown = ', '.join(f"{v:g}" for v in s.impurityfractions)
+            bad.append(f"impurityfractions must sum to at least 0 and less than 1, "
+                       f"got {impsum:.4g} from [{shown}].")
+        if s.fuel not in (1, 2):
+            bad.append(f"fuel must be 1 (D-D) or 2 (D-T), got {s.fuel}.")
+
+        # legal, but worth saying out loud
+        keys = getattr(s, 'rawkeys', set())
+        if ('Zeff_target' in keys) != ('impurity' in keys):
+            warn.append("Zeff_target and impurity must both be given to set an impurity "
+                        "fraction from Z_eff; specifying only one has no effect.")
+        unknown = keys - KNOWN_SETTINGS_KEYS
+        if unknown:
+            warn.append(f"unrecognized settings, which are ignored: {', '.join(sorted(unknown))}.")
+
+        for w in warn:
+            print(f"Warning: {w}")
+        if bad:
+            where = getattr(s, 'settingsfile', 'the settings file')
+            raise ValueError(f"Found {len(bad)} problem(s) in {where}:\n  - "
+                             + "\n  - ".join(bad))
     
     def update_plotsettings(self, plotsettingsfile = None):
         if plotsettingsfile is not None:
@@ -1946,15 +2098,16 @@ def solve_nT_par(state, nn:int, nT:int,
     """
 
     Paux = np.empty((nn,nT),dtype=np.float64)
-    
+    flags = np.zeros((nn,nT),dtype=np.int64)
+
     for i in nb.prange(nn):
         for j in nb.prange(nT):
             if verbosity > 1:
                 print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
-            Paux[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
+            Paux[i,j], flags[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
 
-    return Paux
+    return Paux, flags
 
 @nb.njit(parallel=False, cache=True)
 def solve_nT(state, nn:int, nT:int,
@@ -1967,15 +2120,16 @@ def solve_nT(state, nn:int, nT:int,
     """
 
     Paux = np.empty((nn,nT),dtype=np.float64)
-    
+    flags = np.zeros((nn,nT),dtype=np.int64)
+
     for i in nb.prange(nn):
         for j in nb.prange(nT):
             if verbosity > 1:
                 print("Running n20=",n_e_20[i],", T=",T_i_keV[j]," keV")
 
-            Paux[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
-            
-    return Paux
+            Paux[i,j], flags[i,j] = P_aux_impfrac(state, n_e_20[i], T_i_keV[j])
+
+    return Paux, flags
 
 
 @nb.njit(parallel=True, cache=True)

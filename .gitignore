@@ -3,3 +3,6 @@
 __*
 .vscode
 outputs/*
+.venv
+POPCON.png
+single_point.png
