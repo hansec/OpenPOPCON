@@ -18,9 +18,13 @@ uv run example_run.py      # writes POPCON.png and single_point.png
 uv run --extra notebooks jupyter lab
 ```
 
-**From a clone, with conda.** We recommend miniconda to manage the python environment. On a cluster, you may use `module load anaconda` to load anaconda. If you are running on your private machine, see [the anaconda project](https://docs.anaconda.com/miniconda/) for installation instructions.
+**From a clone, with pip.** If you would rather manage the environment yourself, install the package in editable mode from the root of the repository:
 
-Run `conda env create -f environment.yml` in the root directory of this repository. This creates an environment called `openpopcon`, which you activate with `conda activate openpopcon`.
+```bash
+pip install -e .              # add [notebooks] for jupyterlab, [netcdf4] for the h5netcdf backend
+```
+
+This pulls in the dependencies declared in `pyproject.toml` and makes `import openpopcon` work from anywhere.
 
 ## Usage
 

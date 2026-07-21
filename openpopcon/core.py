@@ -380,7 +380,7 @@ def _W_tot_prof(s, rho, T_i_keV:float, n_e_20:float):
     """
     Plasma energy per cubic meter; also pressure.
     """
-    n_e_r = 1e20*n_e_20*get_profile(s, rho, 2)
+    n_e_r = 1e20*n_e_20*get_profile(s, rho, 1)
     T_e_r = T_i_keV*get_profile(s, rho, 4)/s.tipeak_over_tepeak
     dil = plasma_dilution(s, T_i_keV/s.tipeak_over_tepeak)
     n_i_r = 1e20*n_e_20*get_profile(s, rho, 2)*dil
@@ -1549,7 +1549,7 @@ class POPCON:
         Psynch = self.algorithms.volume_integral(rho,self.algorithms._P_synch(rho, T_e_keV, n_e_20))
         Pimprad = self.algorithms.volume_integral(rho,self.algorithms._P_impurity_rad(rho, T_e_keV, n_e_20))
         Prad = self.algorithms.volume_integral(rho,self.algorithms._P_rad(rho, T_e_keV, n_e_20))
-        Pheat = Pfusion_heating + Pohmic + Paux - Pbrems
+        Pheat = Pfusion_heating + Pohmic + Paux - Pbrems - Psynch
         Palpha = self.algorithms.volume_integral(rho,self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20))*3.52e3/(3.52e3 + 14.06e3)
         Pdd = self.algorithms.volume_integral(rho,self.algorithms._P_DDnHe3_prof(rho, T_i_keV, n_i_20))
         Pdd += self.algorithms.volume_integral(rho,self.algorithms._P_DDpT_prof(rho, T_i_keV, n_i_20))
@@ -1604,7 +1604,10 @@ betaN = {betaN:.3f}
             Pfusion_heating_prof = self.algorithms._P_fusion_heating(rho, T_i_keV, n_i_20)
             Pohmic_prof = self.algorithms._P_OH_prof(rho, T_e_keV, n_e_20)
             Prad_prof = self.algorithms._P_rad(rho, T_e_keV, n_e_20)
-            Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.algorithms.V
+            Pbrems_prof = self.algorithms._P_brem_rad(rho, T_e_keV, n_e_20)
+            Psynch_prof = self.algorithms._P_synch(rho, T_e_keV, n_e_20)
+            # match the scalar Pheat above: brems and synch are removed before transport
+            Pheat_prof = Pfusion_heating_prof + Pohmic_prof + Paux/self.algorithms.V - Pbrems_prof - Psynch_prof
             Palpha_prof = self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20)*3.52e3/(3.52e3 + 14.06e3)
             Pdt_prof = self.algorithms._P_DTnHe4_prof(rho, T_i_keV, n_i_20)
             niprof = n_i_20*self.algorithms.get_profile(rho, 2)
@@ -2071,6 +2074,11 @@ betaN = {betaN:.3f}
         if s.scalinglaw not in self.scalinglaws:
             bad.append(f"scalinglaw '{s.scalinglaw}' is not defined. "
                        f"Available: {', '.join(sorted(self.scalinglaws))}.")
+        elif self.scalinglaws[s.scalinglaw].get('Pheat_alpha') == -1:
+            # the closed-form solver evaluates (W_tot/K)**(1/(1+Pheat_alpha)),
+            # which is singular at Pheat_alpha = -1
+            bad.append(f"scalinglaw '{s.scalinglaw}' has Pheat_alpha = -1, which makes "
+                       f"the closed-form power balance singular. Use a different exponent.")
         if s.resistivity_model.lower() not in RESISTIVITY_MODELS:
             bad.append(f"resistivity_model '{s.resistivity_model}' is not recognized. "
                        f"Available: {', '.join(sorted(RESISTIVITY_MODELS))}.")
@@ -2219,11 +2227,15 @@ def populate_outputs_par(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi):
             Psynch[i,j] = volume_integral(state, rho,_P_synch(state, rho, T_e_max[j], n_e_20_max[i]))
             Pimprad[i,j] = volume_integral(state, rho,_P_impurity_rad(state, rho, T_e_max[j], n_e_20_max[i]))
             Prad[i,j] = Pbrems[i,j] + Pimprad[i,j] + Psynch[i,j]
-            Pheat[i,j] = Pfusionheating[i,j] + Pohmic[i,j] + Paux[i,j] - Pbrems[i,j]
+            Pheat[i,j] = Pfusionheating[i,j] + Pohmic[i,j] + Paux[i,j] - Pbrems[i,j] - Psynch[i,j]
             Wtot[i,j] = volume_integral(state, rho,_W_tot_prof(state, rho,T_i_max[j],n_e_20_max[i]))
             tauE[i,j] = tauE_scalinglaw(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
             Pconf[i,j] = Wtot[i,j]/tauE[i,j]
-            Ploss[i,j] = Pconf[i,j]
+            # Ploss is all power leaving the plasma. Pconf is the transport loss the
+            # scaling law predicts; brems and synch were removed before it (see the
+            # solver's Pheat), so add them back for the total. Psol = Ploss - Prad
+            # then leaves Pconf - Pimprad, the power reaching the divertor.
+            Ploss[i,j] = Pconf[i,j] + Pbrems[i,j] + Psynch[i,j]
             Pdd[i,j] = volume_integral(state, rho,_P_DDnHe3_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
             Pdd[i,j] += volume_integral(state, rho,_P_DDpT_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
             Pdt[i,j] = volume_integral(state, rho,_P_DTnHe4_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
@@ -2286,11 +2298,15 @@ def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi):
             Psynch[i,j] = volume_integral(state, rho,_P_synch(state, rho, T_e_max[j], n_e_20_max[i]))
             Pimprad[i,j] = volume_integral(state, rho,_P_impurity_rad(state, rho, T_e_max[j], n_e_20_max[i]))
             Prad[i,j] = Pbrems[i,j] + Pimprad[i,j] + Psynch[i,j]
-            Pheat[i,j] = Pfusionheating[i,j] + Pohmic[i,j] + Paux[i,j] - Pbrems[i,j]
+            Pheat[i,j] = Pfusionheating[i,j] + Pohmic[i,j] + Paux[i,j] - Pbrems[i,j] - Psynch[i,j]
             Wtot[i,j] = volume_integral(state, rho,_W_tot_prof(state, rho,T_i_max[j],n_e_20_max[i]))
             tauE[i,j] = tauE_scalinglaw(state, Pheat[i,j], n_e_20_max[i]*line_average_fac)
             Pconf[i,j] = Wtot[i,j]/tauE[i,j]
-            Ploss[i,j] = Pconf[i,j]
+            # Ploss is all power leaving the plasma. Pconf is the transport loss the
+            # scaling law predicts; brems and synch were removed before it (see the
+            # solver's Pheat), so add them back for the total. Psol = Ploss - Prad
+            # then leaves Pconf - Pimprad, the power reaching the divertor.
+            Ploss[i,j] = Pconf[i,j] + Pbrems[i,j] + Psynch[i,j]
             Pdd[i,j] = volume_integral(state, rho,_P_DDnHe3_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
             Pdd[i,j] += volume_integral(state, rho,_P_DDpT_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))
             Pdt[i,j] = volume_integral(state, rho,_P_DTnHe4_prof(state, rho, T_i_max[j], n_i_20_max[i,j]))

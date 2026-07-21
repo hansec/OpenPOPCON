@@ -13,7 +13,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "contourpy",    # imported directly by lib/openpopcon_util.py
-    "numba",
+    "numba>=0.60",   # np.trapezoid support inside njit; cache=True with parallel=True
     "pyyaml",
     "xarray",
 ]
