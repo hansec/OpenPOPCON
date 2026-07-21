@@ -22,9 +22,14 @@ dependencies = [
 notebooks = ["jupyterlab"]
 # installs a netCDF4 backend; without it xarray writes netCDF3 via scipy
 netcdf4 = ["h5netcdf"]
+test = ["pytest>=7"]
 
 [project.scripts]
 openpopcon = "openpopcon.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.hatch.build.targets.wheel]
 packages = ["openpopcon"]

@@ -75,6 +75,20 @@ Grid points where power balance has no physical solution are reported in aggrega
 
 The trapped particle fraction that the neoclassical resistivity needs is taken from the gEQDSK when one is supplied. Without a gEQDSK it falls back to `f_t = sqrt(2*rho*a/R)`, which stays below 1 for the aspect ratios these examples use but would not for a spherical tokamak.
 
+## Development
+
+Run the tests with:
+
+```bash
+uv run --extra test pytest
+```
+
+The suite (in `tests/`) solves the MANTA example on a small grid and checks the results against a frozen golden file (`tests/data/golden_manta.json`), verifies physics/consistency invariants, and checks that settings validation accepts every shipped example while rejecting bad inputs. GitHub Actions runs it on every commit to an open pull request. If a change intentionally alters the computed results, regenerate the golden file and commit it alongside the change:
+
+```bash
+uv run python tests/generate_golden.py
+```
+
 ## Bibliography
 
 [1] H.-S. Bosch and G. M. Hale, *Improved Formulas for Fusion Cross-Sections and Thermal Reactivities,* Nucl. Fusion **32**, 611 (1992).
