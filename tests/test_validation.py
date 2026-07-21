@@ -4,6 +4,7 @@ Settings validation. Two guarantees:
     examples, several of which use edge-case values on purpose), and
   - obviously bad settings are rejected at construction with a clear ValueError.
 """
+
 import glob
 import os
 
@@ -47,7 +48,7 @@ def _write_settings(tmp_path, **overrides):
 BAD_SETTINGS = {
     "Tmin_ge_Tmax": dict(Tmin_keV=12.0, Tmax_keV=11.0),
     "nmin_ge_nmax": dict(nmin_frac=0.9, nmax_frac=0.3),
-    "a_ge_R": dict(a=5.0),                      # R is 4.55
+    "a_ge_R": dict(a=5.0),  # R is 4.55
     "delta_out_of_range": dict(delta=1.5),
     "grid_too_small": dict(Nn=1),
     "bad_fuel": dict(fuel=7),
@@ -72,5 +73,8 @@ def test_singular_scaling_law_rejected(tmp_path):
         yaml.safe_dump(laws, fh)
 
     with pytest.raises(ValueError, match="singular"):
-        op.POPCON(settingsfile=SETTINGS, plotsettingsfile=PLOTSETTINGS,
-                  scalinglawfile=str(slfile))
+        op.POPCON(
+            settingsfile=SETTINGS,
+            plotsettingsfile=PLOTSETTINGS,
+            scalinglawfile=str(slfile),
+        )

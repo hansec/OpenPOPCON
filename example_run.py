@@ -11,19 +11,19 @@ or, once installed with pip, from anywhere:
 To start changing the machine, get an editable copy of the examples with
 `openpopcon examples ./my_scans` and point settingsfile at one of those.
 """
+
 import os
 
 import matplotlib.pyplot as plt
 
 import openpopcon as op
 
-manta = op.example_dir('MANTA')
-settingsfile = os.path.join(manta, 'POPCON_input_example.yaml')
-plotsettingsfile = os.path.join(manta, 'plotsettings.yml')
+manta = op.example_dir("MANTA")
+settingsfile = os.path.join(manta, "POPCON_input_example.yaml")
+plotsettingsfile = os.path.join(manta, "plotsettings.yml")
 
 # scalinglawfile defaults to the copy shipped with the package
-pc = op.POPCON(settingsfile=settingsfile,
-               plotsettingsfile=plotsettingsfile)
+pc = op.POPCON(settingsfile=settingsfile, plotsettingsfile=plotsettingsfile)
 
 # solve power balance over the whole density/temperature grid
 pc.run_POPCON()

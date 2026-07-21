@@ -1,7 +1,9 @@
 """
 Shared test fixtures
 """
+
 import matplotlib
+
 matplotlib.use("Agg")
 
 import pytest

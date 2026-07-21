@@ -28,14 +28,14 @@ from .lib.openpopcon_util import example_dir, list_examples
 __version__ = "2.0.0"
 
 __all__ = [
-    'POPCON',
-    'POPCON_scan',
-    'POPCON_settings',
-    'POPCON_plotsettings',
-    'POPCON_algorithms',
-    'POPCON_data_spec',
-    'build_dataset',
-    'example_dir',
-    'list_examples',
-    '__version__',
+    "POPCON",
+    "POPCON_scan",
+    "POPCON_settings",
+    "POPCON_plotsettings",
+    "POPCON_algorithms",
+    "POPCON_data_spec",
+    "build_dataset",
+    "example_dir",
+    "list_examples",
+    "__version__",
 ]

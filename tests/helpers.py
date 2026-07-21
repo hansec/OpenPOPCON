@@ -3,9 +3,11 @@ Shared setup for the test suite.
 
 Solves the MANTA example.
 """
+
 import os
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import openpopcon as op
@@ -17,13 +19,24 @@ PLOTSETTINGS = os.path.join(MANTA, "plotsettings.yml")
 SMALL_GRID = dict(Nn=8, NTi=8, nr=60)
 
 GOLDEN_FIELDS = [
-    "Paux", "Q", "Pheat", "Pconf", "Psol", "f_rad",
-    "tauE", "betaN", "Pfusion", "Pohmic", "n_i_20_avg", "vloop",
+    "Paux",
+    "Q",
+    "Pheat",
+    "Pconf",
+    "Psol",
+    "f_rad",
+    "tauE",
+    "betaN",
+    "Pfusion",
+    "Pohmic",
+    "n_i_20_avg",
+    "vloop",
 ]
 
 GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "data", "golden_manta.json")
 
 UNPHYSICAL = 99998.0
+
 
 def solve_small_manta(parallel=False):
     """

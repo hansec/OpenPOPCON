@@ -2,6 +2,7 @@
 Physics/consistency invariants that should hold regardless of the exact numbers,
 so they keep protecting the code even after the golden file is regenerated.
 """
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
@@ -41,7 +42,8 @@ def test_parallel_matches_serial(solved_manta):
         np.testing.assert_allclose(
             np.asarray(par.output[field].values),
             np.asarray(solved_manta.output[field].values),
-            rtol=1e-9, atol=1e-9,
+            rtol=1e-9,
+            atol=1e-9,
             err_msg=f"parallel and serial disagree on {field}",
         )
 
@@ -60,7 +62,8 @@ def test_output_roundtrip(solved_manta, tmp_path):
         np.testing.assert_allclose(
             np.asarray(restored.output[field].values),
             np.asarray(solved_manta.output[field].values),
-            rtol=1e-9, atol=1e-9,
+            rtol=1e-9,
+            atol=1e-9,
             err_msg=f"roundtrip changed {field}",
         )
     plt.close("all")

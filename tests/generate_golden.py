@@ -8,6 +8,7 @@ Run whenever a change intentionally alters the computed results:
 review the diff to tests/data/golden_manta.json and commit it together with
 the change that caused it.
 """
+
 import json
 import os
 import sys
@@ -37,8 +38,10 @@ def main():
     os.makedirs(os.path.dirname(GOLDEN_PATH), exist_ok=True)
     with open(GOLDEN_PATH, "w") as fh:
         json.dump(payload, fh, indent=1)
-    print(f"Wrote {GOLDEN_PATH} ({len(GOLDEN_FIELDS)} fields, "
-          f"{SMALL_GRID['Nn']}x{SMALL_GRID['NTi']} grid).")
+    print(
+        f"Wrote {GOLDEN_PATH} ({len(GOLDEN_FIELDS)} fields, "
+        f"{SMALL_GRID['Nn']}x{SMALL_GRID['NTi']} grid)."
+    )
 
 
 if __name__ == "__main__":

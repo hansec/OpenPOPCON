@@ -2,11 +2,12 @@ from __future__ import annotations
 import numpy as np
 import json
 
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 # Taken from https://gist.github.com/jannismain/e96666ca4f059c3e5bc28abb711b5c92
 # and modified to print numpy arrays in a more readable way. The original
 # code was written by Jannis Mainczyk and is licensed under the MIT license.
-#-----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+
 
 class CompactJSONEncoder(json.JSONEncoder):
     """A JSON Encoder that puts small containers on single lines."""
@@ -48,7 +49,7 @@ class CompactJSONEncoder(json.JSONEncoder):
             separators=(self.item_separator, self.key_separator),
             default=self.default if hasattr(self, "default") else None,
         )
-    
+
     def _encode_array(self, o):
         if len(list(o.shape)) == 1:
             return self._encode_1d_array(o)
@@ -56,15 +57,18 @@ class CompactJSONEncoder(json.JSONEncoder):
             return self._encode_2d_array(o)
         else:
             return self._encode_list(o.tolist())
+
     def _encode_1d_array(self, o):
         # Always put 1D arrays on a single line
         return "[" + ", ".join(self.encode(el) for el in o) + "]"
+
     def _encode_2d_array(self, o):
         # Always put 2D arrays on multiple lines
         self.indentation_level += 1
         output = [self.indent_str + self.encode(row) for row in o]
         self.indentation_level -= 1
         return "[\n" + ",\n".join(output) + "\n" + self.indent_str + "]"
+
     def _encode_list(self, o):
         if self._put_on_single_line(o):
             return "[" + ", ".join(self.encode(el) for el in o) + "]"
