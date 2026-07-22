@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Cache numba compilation
+        uses: actions/cache@v4
+        with:
+          path: |
+            openpopcon/__pycache__
+            ~/.cache/numba
+          key: numba-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('openpopcon/core.py', 'openpopcon/lib/phys_lib.py', 'openpopcon/lib/openpopcon_util.py', 'pyproject.toml') }}
+
+      - name: Install project and test dependencies
+        run: uv sync --extra test --python ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: uv run pytest

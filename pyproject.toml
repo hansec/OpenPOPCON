@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openpopcon"
+version = "2.0.0"
+description = "0-D tokamak scoping tool for Columbia's Fusion Reactor Design course"
+readme = "README.MD"
+requires-python = ">=3.10,<3.15"
+# Floors are the lowest versions that install and pass the test suite. numpy 2.0
+# (for np.trapezoid) is the hard gate; it forces the numpy-facing packages up to
+# their first numpy-2-compatible release. Verified by the dependency sweep.
+dependencies = [
+    "numpy>=2.0",        # np.trapezoid (replaced np.trapz); numpy 2 required
+    "scipy>=1.13",       # first scipy supporting numpy 2
+    "matplotlib>=3.9",   # first matplotlib supporting numpy 2
+    "contourpy>=1.2.1",  # 1.2.0 caps numpy<2; imported directly by lib/openpopcon_util.py
+    "numba>=0.61",       # np.trapezoid in njit is unsupported in 0.60; numpy 2 + cache/parallel
+    "pyyaml>=6.0.2",     # 6.0/6.0.1 sdists fail to build on py3.12+; 6.0.2 ships those wheels
+    "xarray>=2023.9.0",  # runs under numpy 2; lowest verified
+]
+
+[project.optional-dependencies]
+notebooks = ["jupyterlab"]
+# installs a netCDF4 backend; without it xarray writes netCDF3 via scipy
+netcdf4 = ["h5netcdf"]
+test = ["pytest>=7"]
+
+[project.scripts]
+openpopcon = "openpopcon.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.hatch.build.targets.wheel]
+packages = ["openpopcon"]
+
+# openpopcon/resources (the two config YAMLs and the worked examples) is picked
+# up with the package; the numba cache artifacts are not
+[tool.hatch.build]
+exclude = [
+    "**/__pycache__",
+    "**/*.nbc",
+    "**/*.nbi",
+    "**/*.pyc",
+]
