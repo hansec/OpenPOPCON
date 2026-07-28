@@ -1,4 +1,4 @@
-# OpenPOPCON v2.0
+# OpenPOPCON v2.1.0
 # ===================================
 
 OpenPOPCON is a tool for scoping Tokamak design and operation with 0-D fitted scaling laws. This version has been refactored from the original developed for MIT 22.63, with major contributions from Sam Frank, Richard Nies, Tal Rubin, Oak Nelson, Matthew Pharr, Leonardo Corsaro, and many minor contributions from others. This code is intended for use in Columbia's Fusion Reactor Design course.
