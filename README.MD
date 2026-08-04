@@ -1,4 +1,4 @@
-# OpenPOPCON v2.1.0
+# OpenPOPCON v2.2.0
 # ===================================
 
 OpenPOPCON is a tool for scoping Tokamak design and operation with 0-D fitted scaling laws. This version has been refactored from the original developed for MIT 22.63, with major contributions from Sam Frank, Richard Nies, Tal Rubin, Oak Nelson, Matthew Pharr, Leonardo Corsaro, and many minor contributions from others. This code is intended for use in Columbia's Fusion Reactor Design course.
@@ -39,6 +39,18 @@ cd my_scans/MANTA
 
 Each example directory has its own settings file, a notebook, and where applicable a gEQDSK and a profiles file.
 
+| Example | Machine | Notes |
+| --- | --- | --- |
+| `MANTA` | 4.55 m, 11 T, 10 MA, negative triangularity | gEQDSK + profiles file |
+| `SPARC` | 1.85 m, 12.2 T, 8.7 MA | parabolic profiles |
+| `ITER` | 6.2 m, 5.3 T, 15 MA | 500 MW at Q = 10, parabolic profiles |
+| `CENTAUR` | 2.0 m, 10.9 T, 9.6 MA, negative triangularity | 40 MW breakeven, `H_NT23` scaling |
+| `radiative_ARC` | 4.2 m, 11.5 T, 14 MA | radiative L-mode, `H89` |
+| `NSF` | 0.8 m, 3 T, 1 MA, negative triangularity | gEQDSK + profiles file |
+| `NSF_NT_CMOD` | 0.8 m, 3 T, 1 MA | parabolic profiles |
+
+`ITER` and `CENTAUR` deliberately use parabolic profiles rather than a gEQDSK, which keeps their geometry free for `POPCON_scan` to vary. Each of the two carries a note at the bottom of its settings file on how closely the 0-D result tracks the published design point, and where it does not.
+
 ```python
 # 1. Import the POPCON class
 import openpopcon as op
@@ -73,6 +85,50 @@ ValueError: Found 2 problem(s) in .../POPCON_input_example.yaml:
 
 Grid points where power balance has no physical solution are reported in aggregate after a run and masked out of the plot.
 
+### Plot axes
+
+Either plot axis takes any of seven labels, listed in `openpopcon.PLOT_AXES` and documented in the plotsettings files. They are not split into an x set and a y set: the only rule is that one has to be a density and the other a temperature, since those are the two grid dimensions.
+
+```yaml
+yax: "nG"      # nG, n20_av, n20_ax
+xax: "T_i_av"  # T_i_av, T_i_ax, T_e_av, T_e_ax
+```
+
+Putting `nG` on `xax` and `T_i_av` on `yax` draws the same POPCON with the axes swapped.
+
+### Scanning machine parameters
+
+`POPCON_scan` runs a full POPCON at every combination of two machine parameters and tiles them into one figure, for scoping a design space rather than a single machine.
+
+```python
+sc = op.POPCON_scan(
+    settingsfile=settingsfile,
+    plotsettingsfile=plotsettingsfile,
+    scan={"rows": ("I_P", {"min": 7.0, "max": 12.0, "N": 3}),
+          "cols": ("B_0", [9.0, 10.5, 12.0])},
+)
+sc.run_scan()
+sc.plot()                      # the N x M grid of POPCONs
+sc.plot_metric("Q", "max")     # one number per cell, as a heatmap
+sc.output                      # every cell in one xarray Dataset
+```
+
+The same scan can live in the settings file instead, which is what the `ITER` and `CENTAUR` examples do:
+
+```yaml
+scan:
+  rows: {parameter: I_P, min: 7.0, max: 12.0, N: 3}
+  cols: {parameter: B_0, values: [9.0, 10.5, 12.0]}
+```
+
+Each axis takes either an explicit list of `values` or a `min`/`max`/`N` range, and a `scan=` argument overrides the settings file. Parameters are named as they appear in the settings file, and the whole settings derivation is re-run for each cell rather than a solved field being patched, so scanning `R` on a file that specifies `qstar` correctly re-derives `Ip`. `openpopcon.SCANNABLE_SETTINGS_KEYS` lists what can be varied.
+
+Every panel is drawn on the same contour levels so the cells can be compared directly, and the y axis is shared only when it is the Greenwald fraction, since an absolute density axis moves with `n_G = I_p / (pi a^2)`.
+
+Scanning `R`, `a`, `kappa`, `delta` or `I_P` on an example that supplies a gEQDSK is refused rather than silently ignored: `__get_geometry` takes those from the equilibrium, and always takes the ohmic current from it, so some cells would come out identical and others not. Scan `B_0` or `H_fac` on those examples, or clear `gfilename` to use parabolic profiles.
+
+`sc.write_output()` saves the base settings, the scan specification, the combined arrays and the grid plot; `op.POPCON_scan.read_output(name)` reads it back.
+
 The trapped particle fraction that the neoclassical resistivity needs is taken from the gEQDSK when one is supplied. Without a gEQDSK it falls back to `f_t = sqrt(2*rho*a/R)`, which stays below 1 for the aspect ratios these examples use but would not for a spherical tokamak.
 
 ## Development
@@ -83,7 +139,7 @@ Run the tests with:
 uv run --extra test pytest
 ```
 
-The suite (in `tests/`) solves the MANTA example on a small grid and checks the results against a frozen golden file (`tests/data/golden_manta.json`), verifies physics/consistency invariants, and checks that settings validation accepts every shipped example while rejecting bad inputs. GitHub Actions runs it on every commit to an open pull request. If a change intentionally alters the computed results, regenerate the golden file and commit it alongside the change:
+The suite (in `tests/`) solves the MANTA example on a small grid and checks the results against a frozen golden file (`tests/data/golden_manta.json`), verifies physics/consistency invariants, checks that settings validation accepts every shipped example while rejecting bad inputs, covers every plot axis pairing including the swapped ones, and runs a small `POPCON_scan` end to end. GitHub Actions runs it on every commit to an open pull request. If a change intentionally alters the computed results, regenerate the golden file and commit it alongside the change:
 
 ```bash
 uv run python tests/generate_golden.py
@@ -108,6 +164,8 @@ uv run python tests/generate_golden.py
 [8] C. Paz-Soldan, R. J. L. Haye, D. Shiraki, R. J. Buttery, N. W. Eidietis, E. M. Hollmann, R. A. Moyer, J. E. Boom, I. T. Chapman, and J. E. T. Contributors, The non-thermal origin of the tokamak low-density stability limit, Nucl. Fusion 56, 056010 (2016).
 
 [9] Y. R. Lin-Liu and R. L. Miller, Upper and lower bounds of the effective trapped particle fraction in general tokamak equilibria, Physics of Plasmas 2, 1666 (1995).
+
+[10] *Compact Experimental Negative TriAngUlarity Reactor (CENTAUR): A design study for a compact, affordable breakeven tokamak,* arXiv:2605.27549. Source of the `CENTAUR` example's machine parameters.
 
 
 
@@ -155,4 +213,22 @@ class POPCON:
         "Reads in a previous solution"
     def write_output(self):
         "Writes the current solution to a folder or zip archive"
+
+class POPCON_scan:
+    """Scoping two machine parameters at once. Holds one POPCON per cell,
+    each with its own settings, geometry and output, rather than mutating
+    one; POPCON_settings.with_overrides re-runs the whole derivation chain
+    for each, so nothing derived is left stale."""
+    self.cells: list[list[POPCON]]       # [row][col]
+    self.row, self.col: ScanAxis         # parameter name and its values
+    self.output: xarray.Dataset          # every cell, scan dims first
+
+    def run_scan(self):
+        "Solves every cell, one at a time"
+    def plot(self):
+        "Tiles the cells into one figure on shared contour levels"
+    def plot_metric(self, name, reduce):
+        "One number per cell, as a heatmap"
+    def metric(self, name, reduce):
+        "The same numbers, reduced over the valid points only"
 ```

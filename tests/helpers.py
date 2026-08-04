@@ -10,11 +10,18 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import yaml
+
 import openpopcon as op
 
 MANTA = op.example_dir("MANTA")
 SETTINGS = os.path.join(MANTA, "POPCON_input_example.yaml")
 PLOTSETTINGS = os.path.join(MANTA, "plotsettings.yml")
+
+# SPARC has no gEQDSK, so its geometry settings are actually scannable
+SPARC = op.example_dir("SPARC")
+SPARC_SETTINGS = os.path.join(SPARC, "POPCON_input_example.yaml")
+SPARC_PLOTSETTINGS = os.path.join(SPARC, "plotsettings.yml")
 
 SMALL_GRID = dict(Nn=8, NTi=8, nr=60)
 
@@ -36,6 +43,22 @@ GOLDEN_FIELDS = [
 GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "data", "golden_manta.json")
 
 UNPHYSICAL = 99998.0
+
+
+def write_settings(tmp_path, base=SETTINGS, name="settings.yaml", **overrides):
+    """
+    A settings file built from an example with some keys replaced, detached
+    from any gEQDSK/profile files so it is self-contained.
+    """
+    with open(base) as fh:
+        data = yaml.safe_load(fh)
+    data["gfilename"] = ""
+    data["profsfilename"] = ""
+    data.update(overrides)
+    path = tmp_path / name
+    with open(path, "w") as fh:
+        yaml.safe_dump(data, fh)
+    return str(path)
 
 
 def solve_small_manta(parallel=False):

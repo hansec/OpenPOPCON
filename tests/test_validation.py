@@ -13,7 +13,7 @@ import pytest
 
 import openpopcon as op
 from openpopcon.lib.openpopcon_util import package_resource
-from helpers import PLOTSETTINGS, SETTINGS
+from helpers import PLOTSETTINGS, SETTINGS, write_settings
 
 
 def _settings_file(example):
@@ -32,17 +32,7 @@ def test_shipped_examples_validate(example):
 
 
 def _write_settings(tmp_path, **overrides):
-    with open(SETTINGS) as fh:
-        data = yaml.safe_load(fh)
-    # detach from the gEQDSK/profile files: validation doesn't need them and it
-    # keeps these settings self-contained
-    data["gfilename"] = ""
-    data["profsfilename"] = ""
-    data.update(overrides)
-    path = tmp_path / "bad.yaml"
-    with open(path, "w") as fh:
-        yaml.safe_dump(data, fh)
-    return str(path)
+    return write_settings(tmp_path, name="bad.yaml", **overrides)
 
 
 BAD_SETTINGS = {
