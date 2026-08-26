@@ -13,6 +13,7 @@ If you make changes, append your name and the date to this list.
 Contributors:
 - Matthew Pharr (2024-07-09)
 - Alexei Zhurba (2025-04-04)
+- Evan Bursch (2026-08-26)
 
 """
 
@@ -439,11 +440,14 @@ def BetaN(s, T_i_keV, n_e_20) -> float:
 
     beta = 2 mu0 <P> / (B^2)
     <P> = int P dV / V (average pressure)
+    Since Pressure per m^3 is n_eT_e+n_iT_i, 
+    and W_tot per m^3 is 3/2 (n_eT_e+n_iT_i),
+    P = 2/3 W_tot
     beta_N = beta a B0 / (Ip)
     """
     P_avg = (
         1e6
-        * volume_integral(s, s.sqrtpsin, _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))
+        * volume_integral(s, s.sqrtpsin, (2/3) * _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))
         / s.V
     )
     beta = 2 * (4e-7 * np.pi) * P_avg / (s.B0**2)
@@ -511,7 +515,7 @@ def tauE_H89(s, Pheat, n_e_20) -> float:
 @nb.njit(cache=True)
 def _W_tot_prof(s, rho, T_i_keV: float, n_e_20: float):
     """
-    Plasma energy per cubic meter; also pressure.
+    Plasma energy per cubic meter.
     """
     n_e_r = 1e20 * n_e_20 * get_profile(s, rho, 1)
     T_e_r = T_i_keV * get_profile(s, rho, 4) / s.tipeak_over_tepeak
