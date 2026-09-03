@@ -1,0 +1,137 @@
+#-----------------------------------------------------------------------
+# OpenPOPCON input file: ITER
+#
+# The ITER baseline inductive scenario (Q = 10, 500 MW, 400 s burn).
+# Geometry and engineering parameters from the ITER Physics Basis and
+# Progress in the ITER Physics Basis, Nucl. Fusion 39 (1999) 2175 and
+# Nucl. Fusion 47 (2007) -- reference [7] in the repository README.
+#
+# Parabolic profiles rather than a gEQDSK, deliberately: it keeps R, a,
+# kappa, delta and I_P available to POPCON_scan, which the gEQDSK path
+# overrides.
+#-----------------------------------------------------------------------
+
+name: "ITER"
+
+#----------------------
+# Machine parameters
+#----------------------
+
+R: 6.2            # major radius, m
+a: 2.0            # minor radius, m
+kappa: 1.7        # elongation (95% flux surface)
+delta: 0.33       # triangularity (95% flux surface)
+
+I_P: 15.          # plasma current, MA
+B_0: 5.3          # on-axis toroidal field, T
+
+tipeak_over_tepeak: 1.0   # Ti and Te are close to equilibrated at n_G ~ 0.85
+
+#----------------------
+# Plasma composition
+#----------------------
+
+fuel: 2           # 1 D-D, 2 D-T, 3 D-He3
+
+# He, Ne, Ar, Kr, Xe, W
+impurityfractions: [0.025, 0., 0., 0., 0., 0.]
+
+# ITER's real mix is beryllium and tungsten, but the impurity list above has
+# no beryllium. Neon is used as the low-Z carrier to reach the design Zeff,
+# in the same way the SPARC example uses argon. Tungsten would nominally
+# match the divertor, but Lz(W) is large enough that the implied trace
+# fraction makes P_imprad extremely sensitive.
+Zeff_target: 1.65
+impurity: 1       # 0 He, 1 Ne, 2 Ar, 3 Kr, 4 Xe, 5 W
+
+#----------------------
+# Confinement
+#----------------------
+
+scalinglaw: "H98y2"
+H_fac: 1.0        # the baseline scenario is defined at H98(y,2) = 1
+
+nr: 100           # number of radial points
+
+#----------------------
+# Profiles
+#----------------------
+
+gfilename: ""
+profsfilename: ""
+
+# f(rho) = (1 - offset) * (1 - rho^alpha1)^alpha2 + offset
+#
+# ITER's H-mode density profile is nearly flat inside the pedestal. These
+# shapes give a density peaking of 1.26 and a temperature peaking of 1.66,
+# i.e. Ti(0) = 14.1 keV at <Ti> = 8.5 keV, which puts the fusion power at
+# the design point at 481 MW against the nominal 500 MW. Peaking is what
+# the fusion power is most sensitive to, since it goes as the volume
+# integral of n^2 <sigma v>(T).
+j_alpha1: 2.
+j_alpha2: 3.
+j_offset: 0.01
+
+ne_alpha1: 2.
+ne_alpha2: 0.7
+ne_offset: 0.5
+
+ni_alpha1: 2.
+ni_alpha2: 0.7
+ni_offset: 0.5
+
+Ti_alpha1: 2.
+Ti_alpha2: 1.6
+Ti_offset: 0.35
+
+Te_alpha1: 2.
+Te_alpha2: 1.6
+Te_offset: 0.35
+
+#----------------------
+# Algorithm settings
+#----------------------
+
+Nn: 50            # number of density points
+NTi: 50           # number of temperature points
+
+# n_G = Ip / (pi a^2) = 1.19e20 m^-3; the baseline sits near 0.85
+nmax_frac: 1.0
+nmin_frac: 0.2
+
+# the baseline burns at a volume-averaged T of roughly 8-9 keV
+Tmax_keV: 20.
+Tmin_keV: 3.
+
+resistivity_model: "Jardin"   # Jardin, Paz-Soldan, or maximum
+
+verbosity: 1
+parallel: True
+
+#----------------------
+# Scan (used by POPCON_scan; ignored by a plain POPCON)
+#----------------------
+
+scan:
+  rows:
+    parameter: I_P
+    min: 10.
+    max: 17.
+    N: 3
+  cols:
+    parameter: H_fac
+    values: [0.8, 1.0, 1.2]
+
+#-----------------------------------------------------------------------
+# A note on agreement with the design point
+#
+# The machine is the ITER baseline exactly, and the profile shapes above
+# put the fusion power at the design point near the nominal 500 MW.
+#
+# Q comes out higher than the nominal 10. That is expected and not a
+# mistake: ITER's Q = 10 point is chosen with 50 MW of external heating
+# for burn control and operational margin, not because 50 MW is the
+# minimum needed. A 0-D scoping balance with parabolic profiles finds the
+# ignition boundary close by, so it asks for less auxiliary power and
+# reports a higher Q. Read the Q contours as optimistic.
+#-----------------------------------------------------------------------

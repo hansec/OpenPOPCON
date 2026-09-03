@@ -1,0 +1,83 @@
+#-----------------------------------------------------------------------
+# OpenPOPCON Plotting Settings: CENTAUR
+#
+# Only the entries that differ from resources/default_plotsettings.yml are
+# listed; anything left out falls back to the default.
+#
+# CENTAUR is a 40 MW, Q = 1.3 device, so the default power and Q contour
+# levels (which are set for a ~500 MW reactor) are rescaled here. Without
+# this, every default level falls off the plot.
+#-----------------------------------------------------------------------
+
+yax: "nG" # nG, n20_av or n20_ax
+xax: "T_i_av" # T_i_av, T_i_ax, T_e_av or T_e_ax; either axis takes either family
+figsize: [8, 6]
+fill_invalid: True
+
+plotoptions:
+    Paux:
+        plot: True
+        color: r
+        linewidth: 3
+        label: $P_{aux}$
+        fontsize: 12
+        fmt: '%.2d'
+        spacing: manual
+        manuallevels: [1,5,10,20,30,50,80,120]  # MW; CENTAUR is externally heated
+        scale: minmax
+        levels: 10
+    Pfusion:
+        plot: True
+        color: k
+        linewidth: 2
+        label: $P_{fus}$
+        fontsize: 12
+        fmt: '%.2d'
+        spacing: manual
+        manuallevels: [5,10,20,40,60,80,120]    # MW; design point is 40
+        scale: minmax
+        levels: 10
+    Prad:
+        plot: True
+        color: purple
+        linewidth: 2
+        label: $P_{rad}$
+        fontsize: 12
+        fmt: '%.2d'
+        spacing: manual
+        manuallevels: [2,5,10,20,40]
+        scale: minmax
+        levels: 3
+    Q:
+        plot: True
+        color: orange
+        linewidth: 2
+        label: $Q$
+        fontsize: 12
+        fmt: '%.2f'
+        spacing: manual
+        manuallevels: [0.2,0.5,1.0,1.3,2.0,5.0] # design point is Q = 1.3
+        scale: minmax
+        levels: 6
+    H98:
+        plot: False   # H_NT23 is the relevant scaling here, not H98y2
+        color: blue
+        linewidth: 2
+        label: $H_{98y2}$
+        fontsize: 12
+        fmt: '%.1f'
+        spacing: lin
+        manuallevels: []
+        scale: minmax
+        levels: 5
+    betaN:
+        plot: True
+        color: forestgreen
+        linewidth: 2
+        label: $\beta_N$
+        fontsize: 12
+        fmt: '%.2f'
+        spacing: manual
+        manuallevels: [1.0,1.5,2.0,2.5]         # design point is 1.5
+        scale: minmax
+        levels: 5

@@ -1,0 +1,58 @@
+#-----------------------------------------------------------------------
+# OpenPOPCON Plotting Settings: ITER
+#
+# Only the entries that differ from resources/default_plotsettings.yml are
+# listed; anything left out falls back to the default. The defaults are
+# already scaled for a ~500 MW device, so this is mostly a light touch.
+#-----------------------------------------------------------------------
+
+yax: "nG" # nG, n20_av or n20_ax
+xax: "T_i_av" # T_i_av, T_i_ax, T_e_av or T_e_ax; either axis takes either family
+figsize: [8, 6]
+fill_invalid: True
+
+plotoptions:
+    Paux:
+        plot: True
+        color: r
+        linewidth: 3
+        label: $P_{aux}$
+        fontsize: 12
+        fmt: '%.2d'
+        spacing: manual
+        manuallevels: [10,20,50,73,100,200,500] # 73 MW is the baseline H&CD
+        scale: minmax
+        levels: 10
+    Pfusion:
+        plot: True
+        color: k
+        linewidth: 2
+        label: $P_{fus}$
+        fontsize: 12
+        fmt: '%.2d'
+        spacing: manual
+        manuallevels: [50,100,200,500,1000,2000] # design point is 500 MW
+        scale: minmax
+        levels: 10
+    Q:
+        plot: True
+        color: orange
+        linewidth: 2
+        label: $Q$
+        fontsize: 12
+        fmt: '%.f'
+        spacing: manual
+        manuallevels: [1,2,5,10,20,50,100]      # design point is Q = 10
+        scale: minmax
+        levels: 7
+    betaN:
+        plot: True
+        color: forestgreen
+        linewidth: 2
+        label: $\beta_N$
+        fontsize: 12
+        fmt: '%.2f'
+        spacing: manual
+        manuallevels: [1.0,1.8,2.5,3.0]         # baseline is betaN = 1.8
+        scale: minmax
+        levels: 5

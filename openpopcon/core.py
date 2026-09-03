@@ -31,14 +31,24 @@ from collections import namedtuple
 from .lib import phys_lib as phys
 import shutil
 import datetime
+import io
+import contextlib
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
 # resistivity_model in the settings file -> resistivity_alg on the State
 RESISTIVITY_MODELS = {"jardin": 0, "paz-soldan": 1, "maximum": 2, "max": 2}
 
-__version__ = "2.0.0"
+try:
+    __version__ = _pkg_version("openpopcon")
+except PackageNotFoundError:  # running from a source tree that is not installed
+    __version__ = "unknown"
 
 # P_aux at a grid point with no physical solution. Plotting masks on this.
 UNPHYSICAL = 99999.0
+
+# plotting masks at slightly less than UNPHYSICAL, so that a point that solved
+# to a legitimately enormous P_aux is still distinguishable from a failure
+UNPHYSICAL_PLOT_CUTOFF = 99998.0
 
 # why a grid point has no physical solution. P_aux is set to UNPHYSICAL for all
 # of these; the flag survives so the reason can be reported
@@ -100,6 +110,7 @@ KNOWN_SETTINGS_KEYS = {
     "resistivity_model",
     "verbosity",
     "parallel",
+    "scan",
 }
 
 # keys that used to do something. They are still accepted so that older
@@ -110,6 +121,197 @@ DEPRECATED_SETTINGS_KEYS = {
     "accel": "the solver is closed-form and does not iterate",
     "err": "the solver is closed-form and has no convergence tolerance",
 }
+
+# settings-file keys a scan may vary. These are the YAML-facing names, not the
+# attribute names, because a scan re-derives the whole settings object from the
+# raw file contents rather than patching derived fields
+SCANNABLE_SETTINGS_KEYS = {
+    "R",
+    "a",
+    "kappa",
+    "delta",
+    "B_0",
+    "B_coil",
+    "wall_thickness",
+    "I_P",
+    "qstar",
+    "H_fac",
+    "scalinglaw",
+    "tipeak_over_tepeak",
+    "Zeff_target",
+    "fuel",
+    "j_alpha1",
+    "j_alpha2",
+    "j_offset",
+    "ne_alpha1",
+    "ne_alpha2",
+    "ne_offset",
+    "ni_alpha1",
+    "ni_alpha2",
+    "ni_offset",
+    "Ti_alpha1",
+    "Ti_alpha2",
+    "Ti_offset",
+    "Te_alpha1",
+    "Te_alpha2",
+    "Te_offset",
+    "nmin_frac",
+    "nmax_frac",
+    "Tmin_keV",
+    "Tmax_keV",
+    "resistivity_model",
+}
+
+# scanning these would change array shapes between cells, or means nothing
+UNSCANNABLE_REASONS = {
+    "Nn": "the density grid must be the same size in every cell",
+    "NTi": "the temperature grid must be the same size in every cell",
+    "nr": "the radial grid must be the same size in every cell",
+    "name": "it only labels the run",
+    "gfilename": "the geometry file is what a scan holds fixed",
+    "profsfilename": "the profiles file is what a scan holds fixed",
+    "verbosity": "it only controls printing",
+    "parallel": "it only controls how the solve is threaded",
+    "impurityfractions": "it is an array; scan Zeff_target instead",
+    "impurity": "it selects which species Zeff_target applies to",
+}
+
+# read() prefers the first key of each pair, so overriding the second without
+# removing the first would silently do nothing and produce identical cells
+SCAN_SHADOWS = {
+    "qstar": ("I_P",),
+    "B_coil": ("B_0",),
+    "wall_thickness": ("B_0",),
+}
+
+# geometry that __get_geometry takes from the gEQDSK when one is supplied,
+# overriding whatever the settings file says
+GEQDSK_OWNED_KEYS = {"R", "a", "kappa", "delta", "I_P", "qstar"}
+
+
+# Everything __get_geometry takes from a gEQDSK depends only on the file and
+# nr, but it costs contour tracing plus half a dozen spline fits, all in plain
+# Python. A scan repeats it identically for every cell, so it is cached.
+_GEOMETRY_CACHE = {}
+
+
+def _compute_gfile_geometry(gfilename: str, nr: int) -> dict:
+    gfile = read_eqdsk(gfilename)
+    psin, volgrid, agrid, fs = get_fluxvolumes(gfile, nr)
+    sqrtpsin = np.linspace(0.001, 0.98, nr)
+    volgrid = np.interp(sqrtpsin, np.sqrt(psin), volgrid)
+    _, jrms, jtoravg, cross_sec_areas = get_current_density(gfile, nr)
+    qpsi = np.asarray(gfile["qpsi"])
+    psiq = np.linspace(0, 1, qpsi.shape[0])
+    qr = np.interp(sqrtpsin, np.sqrt(psiq), qpsi)
+
+    Ipint = np.abs(np.trapezoid(y=jtoravg, x=cross_sec_areas)) / 1e6
+    Jrmsint = np.abs(np.trapezoid(y=jrms, x=cross_sec_areas))
+    Jrms_norm = jrms / Jrmsint
+
+    lcfs = fs[-1]
+    geq_a = (np.max(lcfs[:, 0]) - np.min(lcfs[:, 0])) / 2
+    geq_R = np.max(lcfs[:, 0]) - geq_a
+    geq_z0 = (np.max(lcfs[:, 1]) + np.min(lcfs[:, 1])) / 2
+    geq_kappa = np.abs(np.max(lcfs[:, 1]) - np.min(lcfs[:, 1])) / (2 * geq_a)
+    geq_Rtop = lcfs[np.argmax(lcfs[:, 1]), 0]
+    geq_Rbot = lcfs[np.argmin(lcfs[:, 1]), 0]
+    geq_delta = ((geq_R - geq_Rtop) / geq_a + (geq_R - geq_Rbot) / geq_a) / 2
+
+    psin_ft, ftrapped_profile = get_trapped_particle_fraction(gfile)
+    ftrapped_profile = np.interp(sqrtpsin, np.sqrt(psin_ft), ftrapped_profile)
+
+    return {
+        "sqrtpsin": sqrtpsin,
+        "volgrid": volgrid,
+        "agrid": agrid,
+        "qr": qr,
+        "Jrms_norm": Jrms_norm,
+        "ftrapped_profile": ftrapped_profile,
+        "Ipint": Ipint,
+        "geq_a": geq_a,
+        "geq_R": geq_R,
+        "geq_z0": geq_z0,
+        "geq_kappa": geq_kappa,
+        "geq_delta": geq_delta,
+    }
+
+
+def _gfile_geometry(gfilename: str, nr: int) -> dict:
+    """
+    Cached gEQDSK geometry, keyed on the file's identity and mtime so an
+    edited equilibrium is never served stale.
+    """
+    key = (os.path.abspath(gfilename), os.stat(gfilename).st_mtime_ns, int(nr))
+    if key not in _GEOMETRY_CACHE:
+        _GEOMETRY_CACHE[key] = _compute_gfile_geometry(gfilename, nr)
+    cached = _GEOMETRY_CACHE[key]
+    # copies, because _addextprof stores the array by reference and
+    # np.ascontiguousarray in build_state will not copy an already-contiguous
+    # float64 array. Without this, one run could mutate another's geometry
+    return {
+        k: (np.array(v, copy=True) if isinstance(v, np.ndarray) else v)
+        for k, v in cached.items()
+    }
+
+
+def _prepare_output_dir(name, directory, overwrite, default_name):
+    """
+    Works out where write_output should write, and makes an empty directory
+    there. Shared by POPCON and POPCON_scan.
+    """
+    if name == "":
+        stamp = datetime.datetime.now().strftime(r"%Y-%m-%d_%H-%M-%S")
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", default_name) + "_" + stamp
+
+    if directory is None:
+        outputsdir = pathlib.Path.cwd().joinpath("OpenPOPCON_outputs")
+    else:
+        outputsdir = pathlib.Path(directory)
+
+    direxists = outputsdir.joinpath(name).exists()
+    zipexists = outputsdir.joinpath(name + ".zip").exists()
+    if not (direxists or zipexists):
+        outputsdir.joinpath(name).mkdir(parents=True)
+    elif overwrite:
+        if zipexists:
+            outputsdir.joinpath(name + ".zip").unlink()
+        if direxists:
+            shutil.rmtree(outputsdir.joinpath(name))
+        outputsdir.joinpath(name).mkdir(parents=True)
+    else:
+        raise ValueError(
+            f"{'Archive' * zipexists}{' and ' * zipexists * direxists}{'Directory' * direxists} already exist{'s' * (not (direxists and zipexists))}. Set overwrite=True to overwrite."
+        )
+
+    return name, outputsdir, outputsdir.joinpath(name)
+
+
+def _finalize_output(savedir, outputsdir, name, archive):
+    """
+    Zips up a finished output directory if asked. Returns what was written.
+    """
+    if archive:
+        written = outputsdir.joinpath(name + ".zip")
+        shutil.make_archive(str(outputsdir.joinpath(name)), "zip", savedir)
+        shutil.rmtree(savedir)
+    else:
+        written = savedir
+    return written
+
+
+def _apply_overrides(data: dict, overrides: dict) -> dict:
+    """
+    Replaces raw settings-file keys, dropping any key that would shadow one
+    being set. Without the drop, overriding qstar in a file that also gives
+    I_P would be ignored and every cell of a scan would come out identical.
+    """
+    for key, value in overrides.items():
+        for shadowed in SCAN_SHADOWS.get(key, ()):
+            data.pop(shadowed, None)
+        data[key] = value
+    return data
+
 
 DEFAULT_PLOTSETTINGS = package_resource("default_plotsettings.yml")
 DEFAULT_SCALINGLAWS = package_resource("scalinglaws.yml")
@@ -1349,10 +1551,34 @@ class POPCON_settings:
 
     def __init__(
         self,
-        filename: str,
+        filename: str = "",
+        data: dict = None,
+        settingsfile: str = "",
+        overrides: dict = None,
     ) -> None:
-        self.read(filename)
+        """
+        Normally reads a YAML file. A scan instead passes the raw contents of
+        one as `data` plus a dict of `overrides`, so that every derived
+        quantity is recomputed from scratch for each cell rather than patched
+        after the fact.
+        """
+        if data is not None:
+            merged = _apply_overrides(dict(data), overrides or {})
+            self._load(merged, settingsfile or "<dict>")
+        else:
+            self.read(filename)
         pass
+
+    def with_overrides(self, **overrides):
+        """
+        A copy of these settings with some raw settings-file keys replaced.
+        The whole derivation chain is re-run, so overriding 'R' on a file that
+        specifies 'qstar' correctly re-derives Ip, and overriding 'Tmax_keV'
+        re-derives the impurity fraction from Zeff_target.
+        """
+        return POPCON_settings(
+            data=self.rawdata, settingsfile=self.settingsfile, overrides=overrides
+        )
 
     def _resolve(self, path: str) -> str:
         """
@@ -1375,9 +1601,21 @@ class POPCON_settings:
         else:
             raise ValueError("Filename must end with .yaml or .yml")
 
-        self.settingsfile = os.path.abspath(filename)
+        self._load(data, os.path.abspath(filename))
+
+    def _load(self, data: dict, settingsfile: str) -> None:
+        """
+        Sets the settings from an already-parsed settings file. Split out from
+        read so that a scan can re-derive a whole settings object from raw
+        contents it has modified, rather than mutating derived fields.
+        """
+        self.settingsfile = settingsfile
         self.settingsdir = os.path.dirname(self.settingsfile)
         self.rawkeys = set(data.keys())
+        # kept so that with_overrides can re-run the derivation chain below.
+        # a dict, so build_dataset's (int, float, str, bool, ndarray) filter
+        # leaves it out of the saved attributes
+        self.rawdata = dict(data)
 
         try:
             # -----------------------------------------------------------
@@ -1502,8 +1740,10 @@ class POPCON_settings:
             ).lower()
             self.verbosity = int(data["verbosity"])
             self.parallel = bool(data["parallel"])
+            # left raw; POPCON_scan validates it. A plain POPCON ignores it
+            self.scan = safe_get(data, "scan", {})
         except KeyError as e:
-            raise KeyError(f"Key {e} not found in {filename}")
+            raise KeyError(f"Key {e} not found in {self.settingsfile}")
 
 
 POPCON_data_spec = [
@@ -1580,6 +1820,23 @@ ComputedOutputs = namedtuple("ComputedOutputs", COMPUTED_FIELDS)
 DIM_N, DIM_T = "n_index", "T_index"
 AXES_N = ("n_G_frac", "n_e_20_max", "n_e_20_avg")
 AXES_T = ("T_i_max", "T_i_avg", "T_e_max", "T_e_avg")
+
+# Every axis a POPCON can be plotted against: the xax/yax value in a
+# plotsettings file -> (output variable, which grid dimension it indexes, axis
+# label). Adding an entry here is all it takes to add an axis. Either of xax
+# and yax takes any entry, as long as the two index different dimensions, so
+# a density-on-x plot is just a plotsettings change. Only the 1-D coordinates
+# can appear: contours need a rectilinear grid, so a 2-D output like Q cannot
+# be an axis.
+PLOT_AXES = {
+    "T_i_av": ("T_i_avg", DIM_T, r"$\langle T_i\rangle$ (keV)"),
+    "T_i_ax": ("T_i_max", DIM_T, r"$T_i$ (keV, On-axis)"),
+    "T_e_av": ("T_e_avg", DIM_T, r"$\langle T_e\rangle$ (keV)"),
+    "T_e_ax": ("T_e_max", DIM_T, r"$T_e$ (keV, On-axis)"),
+    "n20_av": ("n_e_20_avg", DIM_N, r"$\langle n_{20}\rangle$ ($10^{20} m^{-3}$)"),
+    "n20_ax": ("n_e_20_max", DIM_N, r"$n_{20}(0)$"),
+    "nG": ("n_G_frac", DIM_N, r"$\langle n\rangle /n_G$"),
+}
 
 UNITS = {
     "n_G_frac": "",
@@ -1718,7 +1975,11 @@ class POPCON:
     """
 
     def __init__(
-        self, settingsfile=None, plotsettingsfile=None, scalinglawfile=None
+        self,
+        settingsfile=None,
+        plotsettingsfile=None,
+        scalinglawfile=None,
+        settings=None,
     ) -> None:
         self.algorithms: POPCON_algorithms
         self.settings: POPCON_settings
@@ -1727,7 +1988,11 @@ class POPCON:
 
         # these are kept as absolute paths so that write_output can still copy
         # them if the working directory has changed since construction
-        if settingsfile is not None:
+        if settings is not None:
+            # a scan cell, built from raw settings contents it has modified
+            self.settings = settings
+            self.settingsfile = settings.settingsfile
+        elif settingsfile is not None:
             self.settings = POPCON_settings(settingsfile)
             self.settingsfile = os.path.abspath(settingsfile)
         else:
@@ -2086,35 +2351,71 @@ betaN = {betaN:.3f}
     # Plotting
     # -------------------------------------------------------------------
 
-    def plot(self, show: bool = True, savefig: str = "", names=None):
+    def _resolve_axes(self):
+        """
+        Turns the xax/yax settings into the meshgrid to plot on, the axis
+        labels, and the dimension order that 2-D output arrays have to be
+        transposed into. That last part is what lets either axis be either
+        family: the arrays are stored (n_index, T_index), so putting a density
+        on x means every array has to come out transposed.
+        """
+
+        def look_up(key, which):
+            try:
+                return PLOT_AXES[key]
+            except KeyError:
+                raise ValueError(
+                    f"Invalid {which}-axis '{key}'. Change {which}ax in "
+                    f"plotsettings. Available: {', '.join(sorted(PLOT_AXES))}."
+                )
+
+        xvar, xdim, xlabel = look_up(self.plotsettings.xax, "x")
+        yvar, ydim, ylabel = look_up(self.plotsettings.yax, "y")
+        if xdim == ydim:
+            raise ValueError(
+                f"xax '{self.plotsettings.xax}' and yax '{self.plotsettings.yax}' "
+                f"are both labels for the {xdim} axis, so they cannot be the two "
+                f"axes of one plot. Pick one density and one temperature."
+            )
+        xx, yy = np.meshgrid(self.output[xvar].values, self.output[yvar].values)
+        return xx, yy, xlabel, ylabel, (ydim, xdim)
+
+    def _grid(self, name: str, dimorder) -> np.ndarray:
+        """
+        A 2-D output array laid out to match the meshgrid from _resolve_axes.
+        """
+        return self.output[name].transpose(*dimorder).values
+
+    def plot(
+        self,
+        show: bool = True,
+        savefig: str = "",
+        names=None,
+        ax=None,
+        legend: bool = True,
+        infobox: bool = True,
+        title=None,
+    ):
         """
         Plots the output data. If variable names is specified, only
         plots those variables. Otherwise, refers to the plotsettings
         file.
-        """
-        figsize = self.plotsettings.figsize
-        fig, ax = plt.subplots(figsize=figsize)
-        if self.plotsettings.xax == "T_i_av":
-            xx = self.output.T_i_avg
-        elif self.plotsettings.xax == "T_i_ax":
-            xx = self.output.T_i_max
-        elif self.plotsettings.xax == "T_e_av":
-            xx = self.output.T_e_avg
-        elif self.plotsettings.xax == "T_e_ax":
-            xx = self.output.T_e_max
-        else:
-            raise ValueError("Invalid x-axis. Change xax in plotsettings.")
 
-        if self.plotsettings.yax == "n20_av":
-            yy = self.output.n_e_20_avg
-        elif self.plotsettings.yax == "n20_ax":
-            yy = self.output.n_e_20_max
-        elif self.plotsettings.yax == "nG":
-            yy = self.output.n_G_frac
+        Passing an existing ax draws into it instead of making a new figure,
+        which is how POPCON_scan tiles a grid of these. The legend and the
+        info box are drawn outside the axes, so they are worth turning off
+        when tiling.
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=self.plotsettings.figsize)
+            owns_figure = True
         else:
-            raise ValueError("Invalid y-axis. Change yax in plotsettings.")
-        xx, yy = np.meshgrid(xx, yy)
-        mask = np.logical_or(np.isnan(self.output.Paux), self.output.Paux >= 99998.0)
+            fig = ax.get_figure()
+            owns_figure = False
+
+        xx, yy, xlabel, ylabel, dimorder = self._resolve_axes()
+        Paux = self._grid("Paux", dimorder)
+        mask = np.logical_or(np.isnan(Paux), Paux >= UNPHYSICAL_PLOT_CUTOFF)
         if mask.all():
             raise ValueError(
                 "No point in this scan has a physical solution, so there is nothing "
@@ -2136,10 +2437,9 @@ betaN = {betaN:.3f}
                         (0, 0), 0, 0, fc="k", alpha=0.5, label="No physical solution"
                     )
                 )
-        if np.any(self.output.Q > 1e4):
-            maskburning = np.logical_not(
-                np.logical_or(np.isnan(self.output.Q), self.output.Q >= 1e4)
-            )
+        Qgrid = self._grid("Q", dimorder)
+        if np.any(Qgrid > 1e4):
+            maskburning = np.logical_not(np.logical_or(np.isnan(Qgrid), Qgrid >= 1e4))
             ax.contourf(
                 xx,
                 yy,
@@ -2151,9 +2451,6 @@ betaN = {betaN:.3f}
         if names is None:
             names = self.plotsettings.plotoptions.keys()
         for name in names:
-            mask = np.logical_or(
-                np.isnan(self.output.Paux), self.output.Paux >= 99998.0
-            )
             opdict = self.plotsettings.plotoptions[name]
             if opdict["plot"] == False:
                 continue
@@ -2164,8 +2461,7 @@ betaN = {betaN:.3f}
                 opdict["fontsize"],
                 opdict["fmt"],
             ]
-            data = getattr(self.output, name)
-            data = np.ma.array(data, mask=mask)
+            data = np.ma.array(self._grid(name, dimorder), mask=mask)
             if opdict["spacing"] == "lin":
                 if opdict["scale"] == "minmax":
                     if self.settings.verbosity > 1:
@@ -2211,42 +2507,36 @@ betaN = {betaN:.3f}
                 print(f"Plotting {name} with levels {levels} and options {plotoptions}")
             self.plot_contours(opdict["plot"], ax, data, xx, yy, levels, *plotoptions)
 
-        if self.plotsettings.xax == "T_i_av":
-            ax.set_xlabel(r"$\langle T_i\rangle$ (keV)")
-        elif self.plotsettings.xax == "T_i_ax":
-            ax.set_xlabel(r"$T_i$ (keV, On-axis)")
-        elif self.plotsettings.xax == "T_e_av":
-            ax.set_xlabel(r"$\langle T_e\rangle$ (keV)")
-        elif self.plotsettings.xax == "T_e_ax":
-            ax.set_xlabel(r"$T_e$ (keV, On-axis)")
-        else:
-            pass
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        if title is not None:
+            ax.set_title(title)
 
-        if self.plotsettings.yax == "n20_av":
-            ax.set_ylabel(r"$\langle n_{20}\rangle$ ($10^{20} m^{-3}$)")
-        elif self.plotsettings.yax == "n20_ax":
-            ax.set_ylabel(r"$n_{20}(0)$")
-        elif self.plotsettings.yax == "nG":
-            ax.set_ylabel(r"$\langle n\rangle /n_G$")
-        else:
-            pass
         p = self.algorithms
 
         # 1 = D-D, 2 = D-T, 3 = D-He3
         fueldict = {1: "D-D", 2: "D-T", 3: "D-He3"}
 
-        ax.legend(bbox_to_anchor=(1, 1), loc="upper left")
-        infoboxtext = f"$I_p$ = {p.Ip:.2f}\n$B_0$ = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\n$\\kappa$ = {p.kappa:.2f}\n$\\delta$ = {p.delta:.2f}\n$M_i$ = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\n<Zeff>={p.Zeff(np.average(xx)):.2f}"
-        ax.text(
-            x=np.max(xx) + (np.max(xx) - np.min(xx)) / 64,
-            y=np.min(yy),
-            s=infoboxtext,
-            bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8),
-        )
-        fig.tight_layout()
+        if legend:
+            ax.legend(bbox_to_anchor=(1, 1), loc="upper left")
+        if infobox:
+            # Zeff is a function of temperature, so it has to come off the
+            # temperature axis whichever of x and y that happens to be
+            Tav = np.average(self.output.T_i_avg.values)
+            infoboxtext = f"$I_p$ = {p.Ip:.2f}\n$B_0$ = {p.B0:.2f}\nR = {p.R:.2f}\na = {p.a:.2f}\n$\\kappa$ = {p.kappa:.2f}\n$\\delta$ = {p.delta:.2f}\n$M_i$ = {p.M_i:.2f}\nti/te = {p.tipeak_over_tepeak:.2f}\nfuel = {fueldict[p.fuel]}\n<Zeff>={p.Zeff(Tav):.2f}"
+            ax.text(
+                x=np.max(xx) + (np.max(xx) - np.min(xx)) / 64,
+                y=np.min(yy),
+                s=infoboxtext,
+                bbox=dict(boxstyle="round", fc="w", ec="0.5", alpha=0.8),
+            )
+        if owns_figure:
+            fig.tight_layout()
         if savefig != "":
-            plt.savefig(savefig)
-        if show:
+            # not plt.savefig: with a caller-supplied ax, the current figure
+            # is not necessarily the one being drawn into
+            fig.savefig(savefig)
+        if show and owns_figure:
             plt.show()
 
         return fig, ax
@@ -2286,27 +2576,9 @@ betaN = {betaN:.3f}
         fontsize: int = 11,
         fmt: str = "%1.2f",
     ):
-        if self.plotsettings.xax == "T_i_av":
-            xx = self.output.T_i_avg
-        elif self.plotsettings.xax == "T_i_ax":
-            xx = self.output.T_i_max
-        elif self.plotsettings.xax == "T_e_av":
-            xx = self.output.T_e_avg
-        elif self.plotsettings.xax == "T_e_ax":
-            xx = self.output.T_e_max
-        else:
-            raise ValueError("Invalid x-axis. Change xax in plotsettings.")
-
-        if self.plotsettings.yax == "n20_av":
-            yy = self.output.n_e_20_avg
-        elif self.plotsettings.yax == "n20_ax":
-            yy = self.output.n_e_20_max
-        elif self.plotsettings.yax == "nG":
-            yy = self.output.n_G_frac
-        else:
-            raise ValueError("Invalid y-axis. Change yax in plotsettings.")
-        xx, yy = np.meshgrid(xx, yy)
-        mask = np.logical_or(np.isnan(self.output.Paux), self.output.Paux >= 99998.0)
+        xx, yy, xlabel, ylabel, dimorder = self._resolve_axes()
+        Paux = self._grid("Paux", dimorder)
+        mask = np.logical_or(np.isnan(Paux), Paux >= UNPHYSICAL_PLOT_CUTOFF)
         self.plot_contours(
             True,
             ax,
@@ -2336,31 +2608,9 @@ betaN = {betaN:.3f}
         overwrites the directory/zip if it already exists. The directory
         parameter allows specifying the storage location.
         """
-        if name == "":
-            stamp = datetime.datetime.now().strftime(r"%Y-%m-%d_%H-%M-%S")
-            name = re.sub(r"[^A-Za-z0-9._-]+", "_", self.settings.name) + "_" + stamp
-
-        if directory is None:
-            outputsdir = pathlib.Path.cwd().joinpath("OpenPOPCON_outputs")
-        else:
-            outputsdir = pathlib.Path(directory)
-
-        direxists = outputsdir.joinpath(name).exists()
-        zipexists = outputsdir.joinpath(name + ".zip").exists()
-        if not (direxists or zipexists):
-            outputsdir.joinpath(name).mkdir(parents=True)
-        elif overwrite:
-            if zipexists:
-                outputsdir.joinpath(name + ".zip").unlink()
-            if direxists:
-                shutil.rmtree(outputsdir.joinpath(name))
-            outputsdir.joinpath(name).mkdir(parents=True)
-        else:
-            raise ValueError(
-                f"{'Archive' * zipexists}{' and ' * zipexists * direxists}{'Directory' * direxists} already exist{'s' * (not (direxists and zipexists))}. Set overwrite=True to overwrite."
-            )
-
-        savedir = outputsdir.joinpath(name)
+        name, outputsdir, savedir = _prepare_output_dir(
+            name, directory, overwrite, self.settings.name
+        )
 
         shutil.copyfile(self.settingsfile, savedir.joinpath("settings.yaml"))
         shutil.copyfile(self.plotsettingsfile, savedir.joinpath("plotsettings.yaml"))
@@ -2382,14 +2632,7 @@ betaN = {betaN:.3f}
         self.plot(show=False, savefig=str(savedir.joinpath("POPCON_plot.pdf")))
         plt.close("all")
 
-        if archive:
-            written = outputsdir.joinpath(name + ".zip")
-            shutil.make_archive(str(outputsdir.joinpath(name)), "zip", savedir)
-            shutil.rmtree(savedir)
-        else:
-            written = savedir
-
-        print(f"Wrote output to {written}")
+        print(f"Wrote output to {_finalize_output(savedir, outputsdir, name, archive)}")
         return
 
     def read_output(self, name: str, directory: str = None) -> None:
@@ -2543,29 +2786,19 @@ betaN = {betaN:.3f}
             self.algorithms.Itot = self.settings.Ip
 
         else:
-            gfile = read_eqdsk(self.settings.gfilename)
-            psin, volgrid, agrid, fs = get_fluxvolumes(gfile, self.settings.nr)
-            sqrtpsin = np.linspace(0.001, 0.98, self.settings.nr)
-            volgrid = np.interp(sqrtpsin, np.sqrt(psin), volgrid)
-            _, jrms, jtoravg, cross_sec_areas = get_current_density(
-                gfile, self.settings.nr
-            )
-            qpsi = np.asarray(gfile["qpsi"])
-            psiq = np.linspace(0, 1, qpsi.shape[0])
-            qr = np.interp(sqrtpsin, np.sqrt(psiq), qpsi)
-
-            Ipint = np.abs(np.trapezoid(y=jtoravg, x=cross_sec_areas)) / 1e6
-            Jrmsint = np.abs(np.trapezoid(y=jrms, x=cross_sec_areas))
-            Jrms_norm = jrms / Jrmsint
-
-            lcfs = fs[-1]
-            geq_a = (np.max(lcfs[:, 0]) - np.min(lcfs[:, 0])) / 2
-            geq_R = np.max(lcfs[:, 0]) - geq_a
-            geq_z0 = (np.max(lcfs[:, 1]) + np.min(lcfs[:, 1])) / 2
-            geq_kappa = np.abs(np.max(lcfs[:, 1]) - np.min(lcfs[:, 1])) / (2 * geq_a)
-            geq_Rtop = lcfs[np.argmax(lcfs[:, 1]), 0]
-            geq_Rbot = lcfs[np.argmin(lcfs[:, 1]), 0]
-            geq_delta = ((geq_R - geq_Rtop) / geq_a + (geq_R - geq_Rbot) / geq_a) / 2
+            geo = _gfile_geometry(self.settings.gfilename, self.settings.nr)
+            sqrtpsin = geo["sqrtpsin"]
+            volgrid = geo["volgrid"]
+            agrid = geo["agrid"]
+            qr = geo["qr"]
+            Ipint = geo["Ipint"]
+            Jrms_norm = geo["Jrms_norm"]
+            ftrapped_profile = geo["ftrapped_profile"]
+            geq_a = geo["geq_a"]
+            geq_R = geo["geq_R"]
+            geq_z0 = geo["geq_z0"]
+            geq_kappa = geo["geq_kappa"]
+            geq_delta = geo["geq_delta"]
 
             if self.settings.verbosity > 1:
                 print("gEQDSK geometry:")
@@ -2576,14 +2809,10 @@ betaN = {betaN:.3f}
                 print(f"z0: {geq_z0}")
                 print("gEQDSK Ip:", Ipint)
 
-            psin, ftrapped_profile = get_trapped_particle_fraction(gfile)
-            ftrapped_profile = np.interp(sqrtpsin, np.sqrt(psin), ftrapped_profile)
-
             if self.settings.verbosity > 1:
-                print("Len of psin:", len(psin))
                 print("Len of sqrtpsin:", len(sqrtpsin))
                 print("Len of volgrid:", len(volgrid))
-                print("Len of jrms:", len(jrms))
+                print("Len of Jrms_norm:", len(Jrms_norm))
                 print("Len of qr:", len(qr))
                 print("Len of agrid:", len(agrid))
                 print("Len of ftrapped_profile:", len(ftrapped_profile))
@@ -3034,18 +3263,703 @@ def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi):
     )
 
 
-class POPCON_scan(POPCON):
+class ScanAxis:
+    """
+    One scanned parameter and the values it takes.
+    """
+
+    def __init__(self, parameter: str, values) -> None:
+        self.parameter = str(parameter)
+        self.values = list(values)
+        # never a bare 'n' or 'T': Dataset.T is transpose
+        self.dim = "scan_" + re.sub(r"\W", "_", self.parameter)
+
+    @property
+    def label(self) -> str:
+        return self.parameter
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __repr__(self) -> str:
+        return f"ScanAxis({self.parameter!r}, {self.values!r})"
+
+
+def _parse_axis_spec(spec, which):
+    """
+    Accepts the several ways a scan axis can be written and returns a
+    ScanAxis. Handles ('I_P', [...]), {'parameter':..., 'values': [...]} and
+    {'parameter':..., 'min':..., 'max':..., 'N':...}.
+    """
+    if isinstance(spec, (tuple, list)) and len(spec) == 2:
+        parameter, rest = spec
+        if isinstance(rest, dict):
+            return _parse_axis_spec({"parameter": parameter, **rest}, which)
+        return ScanAxis(parameter, np.asarray(rest, dtype=float).tolist())
+
+    if not isinstance(spec, dict):
+        raise ValueError(
+            f"{which}: could not read the scan specification {spec!r}. Give "
+            f"either ('I_P', [6.0, 8.0, 10.0]) or "
+            f"{{'parameter': 'I_P', 'min': 6.0, 'max': 10.0, 'N': 3}}."
+        )
+
+    spec = dict(spec)
+    parameter = spec.pop("parameter", None)
+    if parameter is None:
+        raise ValueError(f"{which}: the scan specification needs a 'parameter'.")
+
+    if "values" in spec:
+        return ScanAxis(parameter, list(spec["values"]))
+
+    missing = [k for k in ("min", "max", "N") if k not in spec]
+    if missing:
+        raise ValueError(
+            f"{which}: scanning '{parameter}' needs either 'values', or all of "
+            f"'min', 'max' and 'N'. Missing: {', '.join(missing)}."
+        )
+    # N is validated in _check_scan; guard only against linspace throwing here
+    N = int(spec["N"])
+    if N < 1:
+        return ScanAxis(parameter, [])
+    return ScanAxis(
+        parameter, np.linspace(float(spec["min"]), float(spec["max"]), N).tolist()
+    )
+
+
+def _fmt_value(v):
+    return f"{v:g}" if isinstance(v, (int, float, np.floating)) else str(v)
+
+
+class POPCON_scan:
     """
     Class POPCON_scan
 
-    Placeholder class for running scans. Inherits from POPCON.
+    Runs a POPCON at every combination of two scanned machine parameters and
+    plots the results as a grid, so a design space can be looked at in one
+    figure. Holds one fully-formed POPCON per cell rather than subclassing
+    POPCON, because every cell has its own settings, geometry and output.
+
+        sc = op.POPCON_scan(settingsfile='POPCON_input_example.yaml',
+                            plotsettingsfile='plotsettings.yml',
+                            scan={'rows': ('I_P', {'min': 7, 'max': 12, 'N': 3}),
+                                  'cols': ('B_0', [9.0, 10.5, 12.0])})
+        sc.run_scan()
+        sc.plot()
+        sc.plot_metric('Q')
+
+    The scan can equally be written as a `scan:` block in the settings file.
+    Parameters are named as they appear in the settings file, and the whole
+    settings derivation is re-run for each cell, so scanning R on a file that
+    specifies qstar correctly re-derives Ip.
     """
 
-    def __init__(self) -> None:
-        self.datas: list
-        self.algorithms_list: list[POPCON_algorithms]
-        self.settings: POPCON_settings
-        self.plotsettings: list[POPCON_plotsettings]
-        self.scalinglaws: dict
-        self.scanvariables: dict[str, np.ndarray]
-        pass
+    def __init__(
+        self,
+        settingsfile=None,
+        plotsettingsfile=None,
+        scalinglawfile=None,
+        scan=None,
+    ) -> None:
+        self.settingsfile = os.path.abspath(settingsfile)
+        self.plotsettingsfile = plotsettingsfile
+        self.scalinglawfile = scalinglawfile
+        self.base_settings = POPCON_settings(settingsfile)
+
+        spec = scan if scan is not None else self.base_settings.scan
+        if not spec:
+            raise ValueError(
+                "No scan specified. Give scan={'rows': ..., 'cols': ...} or add "
+                "a 'scan:' block to the settings file."
+            )
+        self.row, self.col = self._read_spec(spec)
+        self._check_scan()
+
+        self.cells = []
+        self.cell_overrides = []
+        self._output = None
+        self._build_cells()
+
+    # -------------------------------------------------------------------
+    # Setup
+    # -------------------------------------------------------------------
+
+    def _read_spec(self, spec):
+        if not isinstance(spec, dict):
+            raise ValueError(
+                "The scan specification must be a mapping with 'rows' and "
+                f"'cols' keys, got {type(spec).__name__}."
+            )
+        unknown = set(spec) - {"rows", "cols"}
+        if unknown:
+            raise ValueError(
+                f"Unknown key(s) in the scan specification: "
+                f"{', '.join(sorted(unknown))}. Expected 'rows' and 'cols'."
+            )
+        row = _parse_axis_spec(spec["rows"], "rows") if "rows" in spec else None
+        col = _parse_axis_spec(spec["cols"], "cols") if "cols" in spec else None
+        return row, col
+
+    def _check_scan(self) -> None:
+        """
+        Reports everything wrong with the scan specification at once, in the
+        same style as POPCON.__check_settings.
+        """
+        bad, warn = [], []
+        s = self.base_settings
+
+        if self.row is None or self.col is None:
+            bad.append(
+                "a scan needs two parameters, given as 'rows' and 'cols'. "
+                "To vary just one, give the other a single value."
+            )
+        if self.row is not None and self.col is not None:
+            if self.row.parameter == self.col.parameter:
+                bad.append(
+                    f"rows and cols both scan '{self.row.parameter}'; they must "
+                    f"be different parameters."
+                )
+
+        for axis, which in ((self.row, "rows"), (self.col, "cols")):
+            if axis is None:
+                continue
+            p = axis.parameter
+            if p in UNSCANNABLE_REASONS:
+                bad.append(
+                    f"{which}: '{p}' cannot be scanned, because {UNSCANNABLE_REASONS[p]}."
+                )
+            elif p not in SCANNABLE_SETTINGS_KEYS:
+                bad.append(
+                    f"{which}: '{p}' is not a scannable setting. Available: "
+                    f"{', '.join(sorted(SCANNABLE_SETTINGS_KEYS))}."
+                )
+            if len(axis.values) < 1:
+                bad.append(f"{which}: '{p}' has no values to scan.")
+            if len(set(map(repr, axis.values))) != len(axis.values):
+                warn.append(
+                    f"{which}: '{p}' has repeated values, so some cells will be identical."
+                )
+            # the gEQDSK trap: __get_geometry overrides these from the
+            # equilibrium, and always takes the ohmic current from it
+            if s.gfilename != "" and p in GEQDSK_OWNED_KEYS:
+                bad.append(
+                    f"{which}: '{p}' cannot be scanned while gfilename is set "
+                    f"({os.path.basename(s.gfilename)}). The geometry is read from "
+                    f"the gEQDSK, which overrides R, a, kappa, delta and Ip whenever "
+                    f"they differ from the settings by more than 10%, and always "
+                    f"takes the ohmic current from the equilibrium. Some cells would "
+                    f"silently be identical and others not. Scan B_0 or H_fac "
+                    f"instead, or clear gfilename to use parabolic profiles."
+                )
+
+        for w in warn:
+            print(f"Warning: {w}")
+        if bad:
+            raise ValueError(
+                f"Found {len(bad)} problem(s) in the scan specification in "
+                f"{self.settingsfile}:\n  - " + "\n  - ".join(bad)
+            )
+
+    def _build_cells(self) -> None:
+        """
+        Builds every cell's POPCON up front, so that a settings problem at one
+        corner of the scan is reported before anything is solved.
+        """
+        problems = []
+        self.cells = [[None] * len(self.col) for _ in range(len(self.row))]
+        self.cell_overrides = [[None] * len(self.col) for _ in range(len(self.row))]
+
+        for i, vi in enumerate(self.row.values):
+            for j, vj in enumerate(self.col.values):
+                overrides = {self.row.parameter: vi, self.col.parameter: vj}
+                self.cell_overrides[i][j] = overrides
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        settings = self.base_settings.with_overrides(**overrides)
+                        cell = POPCON(
+                            plotsettingsfile=self.plotsettingsfile,
+                            scalinglawfile=self.scalinglawfile,
+                            settings=settings,
+                        )
+                    self.cells[i][j] = cell
+                except (ValueError, KeyError) as e:
+                    problems.append(
+                        f"cell ({i}, {j}) with {self.row.parameter}="
+                        f"{_fmt_value(vi)}, {self.col.parameter}={_fmt_value(vj)}: {e}"
+                    )
+
+        if problems:
+            raise ValueError(
+                f"{len(problems)} of {len(self.row) * len(self.col)} scan cells have "
+                f"invalid settings:\n  - " + "\n  - ".join(problems)
+            )
+
+    # -------------------------------------------------------------------
+    # Solving
+    # -------------------------------------------------------------------
+
+    @property
+    def shape(self):
+        return (len(self.row), len(self.col))
+
+    def run_scan(self, progress: bool = True, quiet: bool = None) -> None:
+        """
+        Solves every cell. Cells run one at a time: settings.parallel already
+        threads the solve across the whole n,T grid, so a second layer of
+        parallelism would only oversubscribe the cores.
+        """
+        if quiet is None:
+            # a scan reports its own per-cell line, so the cells' own output is
+            # suppressed unless the settings file asks for real verbosity
+            quiet = self.base_settings.verbosity < 2
+
+        nrow, ncol = self.shape
+        total = nrow * ncol
+        gridpoints = total * self.base_settings.Nn * self.base_settings.NTi
+        if gridpoints > 5e5:
+            print(
+                f"Warning: this scan is {nrow}x{ncol} cells of "
+                f"{self.base_settings.Nn}x{self.base_settings.NTi} points "
+                f"({gridpoints:.0f} total). Consider smaller Nn/NTi."
+            )
+
+        for i in range(nrow):
+            for j in range(ncol):
+                cell = self.cells[i][j]
+                label = (
+                    f"{self.row.parameter}={_fmt_value(self.row.values[i])}, "
+                    f"{self.col.parameter}={_fmt_value(self.col.values[j])}"
+                )
+                start = datetime.datetime.now()
+                if quiet:
+                    # read() and __report_invalid print unconditionally; across
+                    # a whole scan that is a wall of text
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        cell.run_POPCON()
+                else:
+                    cell.run_POPCON()
+                elapsed = (datetime.datetime.now() - start).total_seconds()
+                if progress:
+                    valid = int(
+                        np.count_nonzero(
+                            cell.output.Paux.values < UNPHYSICAL_PLOT_CUTOFF
+                        )
+                    )
+                    npts = cell.output.Paux.size
+                    print(
+                        f"  [{i * ncol + j + 1}/{total}] {label}  "
+                        f"{valid}/{npts} points solved  ({elapsed:.1f} s)"
+                    )
+
+        self._output = None
+
+    # -------------------------------------------------------------------
+    # Results
+    # -------------------------------------------------------------------
+
+    @property
+    def datas(self):
+        """Every cell's output Dataset, row-major."""
+        return [c.output for row in self.cells for c in row if hasattr(c, "output")]
+
+    @property
+    def algorithms_list(self):
+        return [
+            c.algorithms for row in self.cells for c in row if hasattr(c, "algorithms")
+        ]
+
+    @property
+    def scanvariables(self):
+        return {
+            self.row.parameter: np.asarray(self.row.values),
+            self.col.parameter: np.asarray(self.col.values),
+        }
+
+    @property
+    def output(self):
+        """
+        Every cell's results in one Dataset, with the two scan parameters as
+        extra dimensions. Built on first use.
+        """
+        if self._output is None:
+            self._output = self._combine()
+        return self._output
+
+    def _combine(self):
+        missing = [
+            (i, j)
+            for i, row in enumerate(self.cells)
+            for j, c in enumerate(row)
+            if c is None or not hasattr(c, "output")
+        ]
+        if missing:
+            raise RuntimeError(
+                f"{len(missing)} cell(s) have no output: {missing}. Call run_scan() first."
+            )
+
+        grid = [[c.output for c in row] for row in self.cells]
+        # coords='all' is deliberate. n_e_20_max and friends genuinely differ
+        # between cells whenever I_P or a is scanned (n_G = Ip/(pi a^2)), and
+        # the default 'different' would make the result's shape depend on which
+        # parameter happened to be scanned. They are non-index coordinates, so
+        # concatenation is positional and nothing is silently dropped
+        ds = xr.combine_nested(
+            grid,
+            concat_dim=[self.row.dim, self.col.dim],
+            coords="all",
+            data_vars="all",
+            join="exact",
+            combine_attrs="drop_conflicts",
+        )
+        ds = ds.assign_coords(
+            {
+                self.row.dim: np.asarray(self.row.values),
+                self.col.dim: np.asarray(self.col.values),
+            }
+        )
+        # combine_nested leaves the two new dimensions in its own order, which
+        # is not the (rows, cols) the cells are indexed by. Pin it, so that
+        # positional use of the arrays lines up with cells[i][j]
+        ds = ds.transpose(self.row.dim, self.col.dim, DIM_N, DIM_T)
+        ds[self.row.dim].attrs["parameter"] = self.row.parameter
+        ds[self.col.dim].attrs["parameter"] = self.col.parameter
+        ds.attrs["scan_parameters"] = json.dumps(
+            [self.row.parameter, self.col.parameter]
+        )
+        return ds
+
+    def metric(self, name: str = "Q", reduce: str = "max"):
+        """
+        One number per cell, reduced over the n,T grid with the unphysical
+        points left out. 'Q'/'max' answers "how far does this machine get".
+        """
+        field = getattr(self.output, name)
+        valid = self.output.Paux < UNPHYSICAL_PLOT_CUTOFF
+        reduced = getattr(field.where(valid), reduce)(dim=[DIM_N, DIM_T])
+        # (rows, cols), so that .values lines up with cells[i][j] and with
+        # the tick labels plot_metric puts on the axes
+        return reduced.transpose(self.row.dim, self.col.dim)
+
+    # -------------------------------------------------------------------
+    # Plotting
+    # -------------------------------------------------------------------
+
+    def _shared_axes(self):
+        """
+        Whether the cells' axes actually mean the same thing. Sharing y is
+        only right for the Greenwald fraction: an absolute density axis moves
+        with n_G = Ip/(pi a^2) and would be misleading if shared.
+        """
+        scanned = {self.row.parameter, self.col.parameter}
+        yax = self.cells[0][0].plotsettings.yax
+        sharey = yax == "nG" and not (scanned & {"nmin_frac", "nmax_frac"})
+        sharex = not (scanned & {"Tmin_keV", "Tmax_keV", "tipeak_over_tepeak"})
+        return sharex, sharey
+
+    def _harmonize_levels(self, names=None) -> None:
+        """
+        Puts every panel on the same contour levels. Without this, 'minmax'
+        scaling picks levels from each panel's own range and no two panels in
+        the figure are comparable. Each cell owns its plotsettings, so this
+        does not leak between them.
+        """
+        cells = [c for row in self.cells for c in row if hasattr(c, "output")]
+        if not cells:
+            return
+        if names is None:
+            names = list(cells[0].plotsettings.plotoptions.keys())
+
+        for name in names:
+            opts = cells[0].plotsettings.plotoptions[name]
+            if not opts["plot"] or opts["spacing"] == "manual":
+                continue
+            lo, hi = np.inf, -np.inf
+            for c in cells:
+                if name not in c.output:
+                    continue
+                valid = c.output.Paux < UNPHYSICAL_PLOT_CUTOFF
+                data = c.output[name].where(valid).values
+                if np.all(np.isnan(data)):
+                    continue
+                lo = min(lo, float(np.nanmin(data)))
+                hi = max(hi, float(np.nanmax(data)))
+            if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+                continue
+            if opts["spacing"] == "log" and lo <= 0:
+                lo = hi * 1e-4
+            for c in cells:
+                o = c.plotsettings.plotoptions[name]
+                o["scale"] = "specified"
+                o["min"], o["max"] = lo, hi
+
+    def plot(
+        self,
+        show: bool = True,
+        savefig: str = "",
+        names=None,
+        figsize=None,
+        panel_size=(3.4, 2.8),
+        sharex=None,
+        sharey=None,
+        harmonize_levels: bool = True,
+        infobox: bool = False,
+    ):
+        """
+        The scan as a grid of POPCONs, one per cell.
+        """
+        nrow, ncol = self.shape
+        auto_x, auto_y = self._shared_axes()
+        sharex = auto_x if sharex is None else sharex
+        sharey = auto_y if sharey is None else sharey
+        if figsize is None:
+            figsize = (panel_size[0] * ncol + 2.4, panel_size[1] * nrow + 1.0)
+
+        if harmonize_levels:
+            self._harmonize_levels(names)
+
+        fig, axs = plt.subplots(
+            nrow, ncol, figsize=figsize, squeeze=False, sharex=sharex, sharey=sharey
+        )
+
+        for i in range(nrow):
+            for j in range(ncol):
+                ax = axs[i][j]
+                cell = self.cells[i][j]
+                try:
+                    # plot() narrates its contour levels at verbosity > 0,
+                    # which across a whole grid is just noise
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        cell.plot(
+                            ax=ax,
+                            show=False,
+                            names=names,
+                            legend=False,
+                            infobox=infobox,
+                        )
+                except ValueError as e:
+                    # one hopeless corner cell must not take the figure with it
+                    ax.text(
+                        0.5,
+                        0.5,
+                        "no physical\nsolution",
+                        ha="center",
+                        va="center",
+                        color="0.4",
+                        transform=ax.transAxes,
+                    )
+                    if self.base_settings.verbosity > 0:
+                        print(f"  cell ({i}, {j}) not plotted: {e}")
+                if i == 0:
+                    ax.set_title(
+                        f"{self.col.label} = {_fmt_value(self.col.values[j])}",
+                        fontsize=11,
+                    )
+                if j == ncol - 1:
+                    twin = ax.twinx()
+                    twin.set_yticks([])
+                    twin.set_ylabel(
+                        f"{self.row.label} = {_fmt_value(self.row.values[i])}",
+                        fontsize=11,
+                    )
+                if sharex and i < nrow - 1:
+                    ax.set_xlabel("")
+                if sharey and j > 0:
+                    ax.set_ylabel("")
+
+        handles, labels = [], []
+        for i in range(nrow):
+            for j in range(ncol):
+                h, lbl = axs[i][j].get_legend_handles_labels()
+                if len(h) > len(handles):
+                    handles, labels = h, lbl
+        if handles:
+            fig.legend(handles, labels, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+        fig.suptitle(
+            f"{self.base_settings.name}: {self.row.parameter} vs {self.col.parameter}",
+            fontsize=13,
+        )
+        fig.tight_layout()
+        if savefig != "":
+            fig.savefig(savefig, bbox_inches="tight")
+        if show:
+            plt.show()
+        return fig, axs
+
+    def plot_metric(
+        self,
+        name: str = "Q",
+        reduce: str = "max",
+        show: bool = True,
+        savefig: str = "",
+        ax=None,
+        cmap: str = "viridis",
+        fmt: str = "{:.3g}",
+    ):
+        """
+        One scalar per cell as a heatmap, so the trend across the scan reads
+        at a glance.
+        """
+        z = self.metric(name, reduce).values
+        if ax is None:
+            fig, ax = plt.subplots(
+                figsize=(1.4 * self.shape[1] + 3, 1.1 * self.shape[0] + 2.5)
+            )
+            owns_figure = True
+        else:
+            fig, owns_figure = ax.get_figure(), False
+
+        im = ax.imshow(z, cmap=cmap, origin="lower", aspect="auto")
+        ax.set_xticks(range(self.shape[1]))
+        ax.set_xticklabels([_fmt_value(v) for v in self.col.values])
+        ax.set_yticks(range(self.shape[0]))
+        ax.set_yticklabels([_fmt_value(v) for v in self.row.values])
+        ax.set_xlabel(self.col.parameter)
+        ax.set_ylabel(self.row.parameter)
+        ax.set_title(f"{reduce} {name} over the n,T grid")
+
+        finite = z[np.isfinite(z)]
+        mid = (finite.max() + finite.min()) / 2 if finite.size else 0.0
+        for i in range(self.shape[0]):
+            for j in range(self.shape[1]):
+                if not np.isfinite(z[i, j]):
+                    continue
+                ax.text(
+                    j,
+                    i,
+                    fmt.format(z[i, j]),
+                    ha="center",
+                    va="center",
+                    color="w" if z[i, j] < mid else "k",
+                    fontsize=9,
+                )
+        fig.colorbar(im, ax=ax, label=f"{reduce} {name}")
+
+        if owns_figure:
+            fig.tight_layout()
+        if savefig != "":
+            fig.savefig(savefig, bbox_inches="tight")
+        if show and owns_figure:
+            plt.show()
+        return fig, ax
+
+    # -------------------------------------------------------------------
+    # File I/O
+    # -------------------------------------------------------------------
+
+    def write_output(
+        self,
+        name: str = "",
+        archive: bool = True,
+        overwrite: bool = False,
+        directory: str = None,
+    ) -> None:
+        """
+        Saves the whole scan: the base settings, the scan specification, the
+        combined arrays and the grid plot.
+        """
+        name, outputsdir, savedir = _prepare_output_dir(
+            name, directory, overwrite, self.base_settings.name + "_scan"
+        )
+
+        shutil.copyfile(self.settingsfile, savedir.joinpath("settings.yaml"))
+        cell0 = self.cells[0][0]
+        shutil.copyfile(cell0.plotsettingsfile, savedir.joinpath("plotsettings.yaml"))
+        shutil.copyfile(cell0.scalinglawfile, savedir.joinpath("scalinglaws.yaml"))
+
+        # per-cell provenance goes here rather than into the netCDF attributes:
+        # combine_attrs='drop_conflicts' discards the differing settings JSON,
+        # and a few dozen KB of attributes would make ncdump unusable anyway
+        with open(savedir.joinpath("scan.json"), "w") as f:
+            json.dump(
+                {
+                    "rows": {
+                        "parameter": self.row.parameter,
+                        "values": self.row.values,
+                    },
+                    "cols": {
+                        "parameter": self.col.parameter,
+                        "values": self.col.values,
+                    },
+                    "overrides": self.cell_overrides,
+                },
+                f,
+                indent=1,
+            )
+
+        for axis in (self.row, self.col):
+            if not all(isinstance(v, (int, float, np.floating)) for v in axis.values):
+                raise ValueError(
+                    f"Cannot write a scan over '{axis.parameter}' to netCDF: its "
+                    f"values are not numeric, and the default netCDF backend "
+                    f"cannot store string coordinates. Install "
+                    f"openpopcon[netcdf4] or scan a numeric parameter."
+                )
+        self.output.to_netcdf(savedir.joinpath("arrays.nc"))
+
+        if self.base_settings.gfilename != "":
+            shutil.copyfile(
+                self.base_settings.gfilename,
+                savedir.joinpath(os.path.basename(self.base_settings.gfilename)),
+            )
+        if self.base_settings.profsfilename != "":
+            shutil.copyfile(
+                self.base_settings.profsfilename,
+                savedir.joinpath(os.path.basename(self.base_settings.profsfilename)),
+            )
+
+        self.plot(show=False, savefig=str(savedir.joinpath("POPCON_scan_plot.pdf")))
+        plt.close("all")
+
+        print(f"Wrote output to {_finalize_output(savedir, outputsdir, name, archive)}")
+
+    @classmethod
+    def read_output(cls, name: str, directory: str = None):
+        """
+        Reads back a scan written by write_output. Returns a POPCON_scan whose
+        cells are set up but not re-solved; each cell's output is sliced out
+        of the saved arrays.
+        """
+        if directory is None:
+            outputsdir = pathlib.Path.cwd().joinpath("OpenPOPCON_outputs")
+        else:
+            outputsdir = pathlib.Path(directory)
+
+        if name.endswith(".zip"):
+            readdir = outputsdir.joinpath(name[:-4])
+            shutil.unpack_archive(outputsdir.joinpath(name), readdir, "zip")
+        else:
+            readdir = outputsdir.joinpath(name)
+
+        with open(readdir.joinpath("scan.json"), "r") as f:
+            spec = json.load(f)
+
+        sc = cls(
+            settingsfile=str(readdir.joinpath("settings.yaml")),
+            plotsettingsfile=str(readdir.joinpath("plotsettings.yaml")),
+            scalinglawfile=str(readdir.joinpath("scalinglaws.yaml")),
+            scan={
+                "rows": (spec["rows"]["parameter"], spec["rows"]["values"]),
+                "cols": (spec["cols"]["parameter"], spec["cols"]["values"]),
+            },
+        )
+
+        ds = xr.load_dataset(readdir.joinpath("arrays.nc"))
+        sc._output = ds
+        for i in range(sc.shape[0]):
+            for j in range(sc.shape[1]):
+                cell = sc.cells[i][j]
+                if cell.settings.gfilename != "":
+                    cell.settings.gfilename = str(
+                        readdir.joinpath(os.path.basename(cell.settings.gfilename))
+                    )
+                if cell.settings.profsfilename != "":
+                    cell.settings.profsfilename = str(
+                        readdir.joinpath(os.path.basename(cell.settings.profsfilename))
+                    )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    cell.run_POPCON(setuponly=True)
+                cell.output = ds.isel({sc.row.dim: i, sc.col.dim: j}).drop_vars(
+                    [sc.row.dim, sc.col.dim]
+                )
+        return sc

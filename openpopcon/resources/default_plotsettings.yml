@@ -2,11 +2,20 @@
 # OpenPOPCON Plotting Settings
 #-----------------------------------------------------------------------
 
-yax: "nG" # y-axis variable; nG for greenwald fraction, n20 for density
-xax: "T_i_av" # x-axis variable; T_i_av for average ion temperature, 
-              #                  T_i_ax for maximum ion temperature,
-              #                  T_e_av for average electron temperature,
-              #                  T_e_ax for maximum electron temperature
+# Either axis takes any of the seven names below. They are not split into
+# an x set and a y set; the only rule is that one has to be a density and
+# the other a temperature, since those are the two grid dimensions. So
+# xax: "nG" with yax: "T_i_av" draws the same POPCON with the axes swapped.
+#
+#   nG       Greenwald fraction, <n>/n_G
+#   n20_av   volume-averaged electron density, 10^20 m^-3
+#   n20_ax   on-axis electron density, 10^20 m^-3
+#   T_i_av   volume-averaged ion temperature, keV
+#   T_i_ax   on-axis ion temperature, keV
+#   T_e_av   volume-averaged electron temperature, keV
+#   T_e_ax   on-axis electron temperature, keV
+yax: "nG" # y-axis variable
+xax: "T_i_av" # x-axis variable
 figsize: [8, 6] # figure size in inches
 fill_invalid: True # shade points with no physical solution
 

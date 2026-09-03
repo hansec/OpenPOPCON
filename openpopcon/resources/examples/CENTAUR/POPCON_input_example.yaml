@@ -1,0 +1,167 @@
+#-----------------------------------------------------------------------
+# OpenPOPCON input file: CENTAUR
+#
+# Compact Experimental Negative TriAngUlarity Reactor: a compact, high
+# field, negative triangularity breakeven tokamak. Parameters from Table 1
+# of arXiv:2605.27549, "Compact Experimental Negative TriAngUlarity Reactor
+# (CENTAUR): A design study for a compact, affordable breakeven tokamak".
+#
+# Design point: 40 MW fusion power, Q = 1.3, 10 s pulse.
+#
+# Parabolic profiles rather than a gEQDSK, deliberately: it keeps R, a,
+# kappa, delta and I_P available to POPCON_scan, which the gEQDSK path
+# overrides.
+#-----------------------------------------------------------------------
+
+name: "CENTAUR"
+
+#----------------------
+# Machine parameters
+#----------------------
+
+R: 2.0            # major radius, m
+a: 0.72           # minor radius, m  (aspect ratio 2.78)
+kappa: 1.65       # elongation
+delta: -0.55      # triangularity -- negative, this is an NT device
+
+I_P: 9.6          # plasma current, MA  (q95 = 2.58, q0 = 1.04)
+B_0: 10.9         # on-axis toroidal field, T
+
+# Table 1 gives volume-averaged Ti = 5.15 keV and Te = 4.15 keV
+tipeak_over_tepeak: 1.24
+
+#----------------------
+# Plasma composition
+#----------------------
+
+fuel: 2           # 50/50 D-T
+
+# He, Ne, Ar, Kr, Xe, W
+# 1% helium: the pulse is 10 s at Q = 1.3, so very little ash accumulates
+impurityfractions: [0.01, 0., 0., 0., 0., 0.]
+
+# Table 1 gives Zeff = 1.43, with argon in the core and neon at the edge,
+# and puts 13.5% of the radiated power between the separatrix and the
+# plasma facing components. This model has a single impurity radiating
+# uniformly from the core, so it cannot represent that split; neon is used
+# as the Zeff carrier because taking the full Zeff as core argon
+# substantially overstates core radiation for a device that radiates mostly
+# in the divertor.
+Zeff_target: 1.43
+impurity: 1       # 0 He, 1 Ne, 2 Ar, 3 Kr, 4 Xe, 5 W
+
+#----------------------
+# Confinement
+#----------------------
+
+# H_NT23 is the negative-triangularity scaling, which is the relevant one
+# here. Table 1 quotes H_NT = 0.87 (and H98,y2 = 0.54) at the design point.
+scalinglaw: "H_NT23"
+H_fac: 0.87
+
+nr: 100           # number of radial points
+
+#----------------------
+# Profiles
+#----------------------
+
+gfilename: ""
+profsfilename: ""
+
+# f(rho) = (1 - offset) * (1 - rho^alpha1)^alpha2 + offset
+#
+# Broad, weakly peaked profiles. NT plasmas are ELM-free and have no
+# pedestal, and these shapes are what reproduce the published 40 MW of
+# fusion power at the Table 1 operating point: density peaking 1.23 and
+# temperature peaking 1.24, i.e. Ti(0) = 6.4 keV at <Ti> = 5.15 keV.
+# Peaking matters more than anything else here, because the fusion power
+# goes as the volume integral of n^2 <sigma v>(T).
+j_alpha1: 2.
+j_alpha2: 3.
+j_offset: 0.01
+
+ne_alpha1: 2.
+ne_alpha2: 0.6
+ne_offset: 0.5
+
+ni_alpha1: 2.
+ni_alpha2: 0.6
+ni_offset: 0.5
+
+Ti_alpha1: 2.
+Ti_alpha2: 0.9
+Ti_offset: 0.6
+
+Te_alpha1: 2.
+Te_alpha2: 0.9
+Te_offset: 0.6
+
+#----------------------
+# Algorithm settings
+#----------------------
+
+Nn: 50            # number of density points
+NTi: 50           # number of temperature points
+
+# n_G = Ip / (pi a^2) = 5.90e20 m^-3; Table 1 gives a volume-averaged
+# n_e of 3.21e20, i.e. a Greenwald fraction of roughly 0.55
+nmax_frac: 0.9
+nmin_frac: 0.2
+
+# Table 1's operating point is <Ti> = 5.15 keV. The window runs well past
+# it because H_NT23 has Pheat_alpha = -0.89, so the closed-form balance
+# solves P_heat = (W_tot/K)^9.09. That exponent makes P_heat extremely
+# stiff, and the accessible region has a sharp lower edge in temperature
+# where impurity radiation overtakes it. See the note at the end.
+Tmax_keV: 14.
+Tmin_keV: 4.
+
+resistivity_model: "Jardin"   # Jardin, Paz-Soldan, or maximum
+
+verbosity: 1
+parallel: True
+
+#----------------------
+# Scan (used by POPCON_scan; ignored by a plain POPCON)
+#----------------------
+
+scan:
+  rows:
+    parameter: I_P
+    min: 7.
+    max: 12.
+    N: 3
+  cols:
+    parameter: B_0
+    min: 9.
+    max: 12.
+    N: 3
+
+#-----------------------------------------------------------------------
+# A note on agreement with the paper
+#
+# The machine here is Table 1 exactly: R, a, kappa, delta, I_P, B_0, fuel,
+# Zeff, the NT confinement scaling and H_NT = 0.87. The profile shapes are
+# chosen so that the fusion power at the published operating point comes
+# out at the published 40 MW.
+#
+# The 0-D closed-form balance does not reproduce the paper's Q = 1.3 and
+# tau_E = 0.41 s at the same time, and it is worth knowing why rather than
+# being surprised by it:
+#
+#   - The published scalars are not mutually consistent under a plain 0-D
+#     energy balance. The quoted n_e, T and plasma volume give a stored
+#     energy of about 25 MJ, which with tau_E = 0.41 s implies 60 MW of
+#     loss power, and with 40 MW of fusion power that is Q ~ 0.8, not 1.3.
+#     The paper's numbers come from an integrated model with a real
+#     transport solve, not from this kind of scoping balance.
+#
+#   - H_NT23's power degradation exponent of -0.89 makes P_heat go as
+#     (W_tot/K)^9.09. A 10% change in stored energy moves the required
+#     heating power by more than a factor of two, so this machine has a
+#     narrow band between "impurity radiation exceeds the confinement
+#     loss" and "ignited, needs no auxiliary power at all".
+#
+# Treat this as a scoping model of the CENTAUR machine, not a reproduction
+# of the CENTAUR design point.
+#-----------------------------------------------------------------------

@@ -21,11 +21,13 @@ from .core import (
     POPCON_plotsettings,
     POPCON_algorithms,
     POPCON_data_spec,
+    ScanAxis,
     build_dataset,
+    PLOT_AXES,
+    SCANNABLE_SETTINGS_KEYS,
+    __version__,
 )
 from .lib.openpopcon_util import example_dir, list_examples
-
-__version__ = "2.0.0"
 
 __all__ = [
     "POPCON",
@@ -34,7 +36,10 @@ __all__ = [
     "POPCON_plotsettings",
     "POPCON_algorithms",
     "POPCON_data_spec",
+    "ScanAxis",
     "build_dataset",
+    "PLOT_AXES",
+    "SCANNABLE_SETTINGS_KEYS",
     "example_dir",
     "list_examples",
     "__version__",
