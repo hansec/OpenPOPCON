@@ -68,6 +68,7 @@ NOAUX = 3
 KNOWN_SETTINGS_KEYS = {
     "name",
     "R",
+    "R_0",
     "a",
     "kappa",
     "delta",
@@ -86,6 +87,7 @@ KNOWN_SETTINGS_KEYS = {
     "nr",
     "gfilename",
     "profsfilename",
+    "gfile_rescale",
     "j_alpha1",
     "j_alpha2",
     "j_offset",
@@ -127,6 +129,7 @@ DEPRECATED_SETTINGS_KEYS = {
 # raw file contents rather than patching derived fields
 SCANNABLE_SETTINGS_KEYS = {
     "R",
+    "R_0",
     "a",
     "kappa",
     "delta",
@@ -174,11 +177,16 @@ UNSCANNABLE_REASONS = {
     "parallel": "it only controls how the solve is threaded",
     "impurityfractions": "it is an array; scan Zeff_target instead",
     "impurity": "it selects which species Zeff_target applies to",
+    "gfile_rescale": "it decides how the gEQDSK is used; set it in the settings file",
 }
 
 # read() prefers the first key of each pair, so overriding the second without
-# removing the first would silently do nothing and produce identical cells
+# removing the first would silently do nothing and produce identical cells.
+# R and R_0 are aliases that read() refuses to see together, so each drops the
+# other
 SCAN_SHADOWS = {
+    "R": ("R_0",),
+    "R_0": ("R",),
     "qstar": ("I_P",),
     "B_coil": ("B_0",),
     "wall_thickness": ("B_0",),
@@ -186,7 +194,12 @@ SCAN_SHADOWS = {
 
 # geometry that __get_geometry takes from the gEQDSK when one is supplied,
 # overriding whatever the settings file says
-GEQDSK_OWNED_KEYS = {"R", "a", "kappa", "delta", "I_P", "qstar"}
+GEQDSK_OWNED_KEYS = {"R", "R_0", "a", "kappa", "delta", "I_P", "qstar"}
+
+# ...except these, when gfile_rescale is set: the gEQDSK is then moved and
+# resized to the settings R and a, and carries the settings current, instead
+# of those being taken from the file
+GEQDSK_RESCALABLE_KEYS = {"R", "R_0", "a", "I_P", "qstar"}
 
 
 # Everything __get_geometry takes from a gEQDSK depends only on the file and
@@ -221,6 +234,19 @@ def _compute_gfile_geometry(gfilename: str, nr: int) -> dict:
     psin_ft, ftrapped_profile = get_trapped_particle_fraction(gfile)
     ftrapped_profile = np.interp(sqrtpsin, np.sqrt(psin_ft), ftrapped_profile)
 
+    # what gfile_rescale needs to move and resize the flux surfaces exactly. By
+    # Pappus, dV/dR = 2 pi (cross-sectional area) and dS/dR = 2 pi (perimeter)
+    # for a translation; see __get_geometry for the resize. Each is on the same
+    # grid as the quantity it adjusts
+    dVdR = np.empty(len(fs))
+    dSdR = np.empty(len(fs))
+    for i, contour in enumerate(fs):
+        r, z = contour[:, 0], contour[:, 1]
+        dVdR[i] = 2 * np.pi * np.abs(np.sum(r[:-1] * z[1:] - r[1:] * z[:-1])) / 2
+        # summed the same way get_fluxvolumes sums the area it is shifting
+        dSdR[i] = np.trapezoid(2 * np.pi * np.hypot(np.diff(r), np.diff(z)))
+    dVdR = np.interp(sqrtpsin, np.sqrt(psin), dVdR)
+
     return {
         "sqrtpsin": sqrtpsin,
         "volgrid": volgrid,
@@ -228,6 +254,10 @@ def _compute_gfile_geometry(gfilename: str, nr: int) -> dict:
         "qr": qr,
         "Jrms_norm": Jrms_norm,
         "ftrapped_profile": ftrapped_profile,
+        "dVdR": dVdR,
+        "dSdR": dSdR,
+        # vacuum field at the LCFS geometric centre, which q was solved for
+        "geq_B0": float(gfile["bcentr"]) * float(gfile["rcentr"]) / geq_R,
         "Ipint": Ipint,
         "geq_a": geq_a,
         "geq_R": geq_R,
@@ -642,14 +672,16 @@ def BetaN(s, T_i_keV, n_e_20) -> float:
 
     beta = 2 mu0 <P> / (B^2)
     <P> = int P dV / V (average pressure)
-    Since Pressure per m^3 is n_eT_e+n_iT_i, 
+    Since Pressure per m^3 is n_eT_e+n_iT_i,
     and W_tot per m^3 is 3/2 (n_eT_e+n_iT_i),
     P = 2/3 W_tot
     beta_N = beta a B0 / (Ip)
     """
     P_avg = (
         1e6
-        * volume_integral(s, s.sqrtpsin, (2/3) * _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20))
+        * volume_integral(
+            s, s.sqrtpsin, (2 / 3) * _W_tot_prof(s, s.sqrtpsin, T_i_keV, n_e_20)
+        )
         / s.V
     )
     beta = 2 * (4e-7 * np.pi) * P_avg / (s.B0**2)
@@ -1165,7 +1197,9 @@ class POPCON_algorithms:
         self.resistivity_alg: int = (
             0  # Resistivity algorithm. 0 = Jardin, 1 = Paz-Soldan, 2 = local maximum
         )
-        self.verbosity: int = 0  # Verbosity level. 0 = silent, 1 = normal, 2 = debug, 3 = print all matrices
+        self.verbosity: int = (
+            0  # Verbosity level. 0 = silent, 1 = normal, 2 = debug, 3 = print all matrices
+        )
 
         self.state = None  # Set by build_state after setup
 
@@ -1622,7 +1656,12 @@ class POPCON_settings:
             # Params
             # -----------------------------------------------------------
             self.name = str(data["name"])
-            self.R = float(data["R"])
+            # R_0 is an alias for R, named to match B_0
+            if "R" in data and "R_0" in data:
+                raise ValueError(
+                    "R and R_0 are both the major radius; give only one of them."
+                )
+            self.R = float(data["R_0"] if "R_0" in data else data["R"])
             self.a = float(data["a"])
             self.kappa = float(data["kappa"])
             self.delta = float(data["delta"])
@@ -1704,6 +1743,9 @@ class POPCON_settings:
             self.nr = int(data["nr"])
 
             self.gfilename = self._resolve(str(safe_get(data, "gfilename", "")))
+            # move and resize the gEQDSK to R, a and Ip rather than taking
+            # those from it
+            self.gfile_rescale = bool(safe_get(data, "gfile_rescale", False))
             self.profsfilename = self._resolve(str(safe_get(data, "profsfilename", "")))
 
             self.j_alpha1 = float(safe_get(data, "j_alpha1", 1))
@@ -2808,6 +2850,7 @@ betaN = {betaN:.3f}
                 print(f"Triangularity: {geq_delta}")
                 print(f"z0: {geq_z0}")
                 print("gEQDSK Ip:", Ipint)
+                print("gEQDSK B0:", geo["geq_B0"])
 
             if self.settings.verbosity > 1:
                 print("Len of sqrtpsin:", len(sqrtpsin))
@@ -2817,18 +2860,59 @@ betaN = {betaN:.3f}
                 print("Len of agrid:", len(agrid))
                 print("Len of ftrapped_profile:", len(ftrapped_profile))
 
-            if np.abs(geq_a / self.settings.a - 1) > 0.1:
-                print(
-                    f"Warning: gEQDSK minor radius ({geq_a} m) differs significantly from settings a ({self.settings.a} m). Defaulting to gEQDSK value."
+            if self.settings.gfile_rescale:
+                # keep the settings R, a and Ip, and map every flux surface
+                # onto them: r -> R + s (r - geq_R), z -> z0 + s (z - z0) with
+                # s = a / geq_a. kappa and delta are unchanged by construction.
+                # Volumes and areas follow exactly. q and the trapped fraction
+                # are rescaled to leading order in the inverse aspect ratio,
+                # q ~ a^2 B_0 / (R Ip) and f_t ~ sqrt(a / R)
+                R, a, Ip = self.settings.R, self.settings.a, self.settings.Ip
+                sc = a / geq_a
+                offset = R - sc * geq_R
+                volgrid = sc**3 * volgrid + sc**2 * offset * geo["dVdR"]
+                agrid = sc**2 * agrid + sc * offset * geo["dSdR"]
+                # normalized so that its integral over the cross-section is 1
+                Jrms_norm = Jrms_norm / sc**2
+                qr = (
+                    qr
+                    * sc**2
+                    * (geq_R / R)
+                    * (Ipint / Ip)
+                    * (self.settings.B0 / geo["geq_B0"])
                 )
-                self.settings.a = geq_a
-                self.algorithms.a = geq_a
-            if np.abs(geq_R / self.settings.R - 1) > 0.1:
-                print(
-                    f"Warning: gEQDSK major radius ({geq_R} m) differs significantly from settings R ({self.settings.R} m). Defaulting to gEQDSK value."
+                ftrapped_profile = np.minimum(
+                    ftrapped_profile * np.sqrt(sc * geq_R / R), 1.0
                 )
-                self.settings.R = geq_R
-                self.algorithms.R = geq_R
+                Itot = Ip
+                if self.settings.verbosity > 0:
+                    print(
+                        f"gEQDSK rescaled from R = {geq_R:.4g} m, a = {geq_a:.4g} m, "
+                        f"Ip = {Ipint:.4g} MA to R = {R:.4g} m, a = {a:.4g} m, "
+                        f"Ip = {Ip:.4g} MA (gfile_rescale)."
+                    )
+            else:
+                if np.abs(geq_a / self.settings.a - 1) > 0.1:
+                    print(
+                        f"Warning: gEQDSK minor radius ({geq_a} m) differs significantly from settings a ({self.settings.a} m). Defaulting to gEQDSK value."
+                    )
+                    self.settings.a = geq_a
+                    self.algorithms.a = geq_a
+                if np.abs(geq_R / self.settings.R - 1) > 0.1:
+                    print(
+                        f"Warning: gEQDSK major radius ({geq_R} m) differs significantly from settings R ({self.settings.R} m). Defaulting to gEQDSK value."
+                    )
+                    self.settings.R = geq_R
+                    self.algorithms.R = geq_R
+                if np.abs(Ipint / self.settings.Ip - 1) > 0.1:
+                    print(
+                        f"Warning: gEQDSK Ip ({Ipint}) differs significantly from settings Ip ({self.settings.Ip}). Defaulting to gEQDSK value."
+                    )
+                    self.settings.Ip = Ipint
+                    self.algorithms.Ip = Ipint
+                # the ohmic current always comes from the equilibrium
+                Itot = Ipint
+
             if np.abs(geq_kappa / self.settings.kappa - 1) > 0.1:
                 print(
                     f"Warning: gEQDSK elongation ({geq_kappa}) differs significantly from settings kappa ({self.settings.kappa}). Defaulting to gEQDSK value."
@@ -2841,17 +2925,11 @@ betaN = {betaN:.3f}
                 )
                 self.settings.delta = geq_delta
                 self.algorithms.delta = geq_delta
-            if np.abs(Ipint / self.settings.Ip - 1) > 0.1:
-                print(
-                    f"Warning: gEQDSK Ip ({Ipint}) differs significantly from settings Ip ({self.settings.Ip}). Defaulting to gEQDSK value."
-                )
-                self.settings.Ip = Ipint
-                self.algorithms.Ip = Ipint
 
             self.algorithms._addextprof(sqrtpsin, -2)
             self.algorithms._addextprof(volgrid, -1)
             self.algorithms._addextprof(Jrms_norm, 0)
-            self.algorithms.Itot = Ipint
+            self.algorithms.Itot = Itot
             self.algorithms._addextprof(qr, 5)
             self.algorithms._addextprof(agrid, -3)
             self.algorithms._addextprof(ftrapped_profile, 6)
@@ -3263,33 +3341,100 @@ def populate_outputs(state, n_e_20_max, T_i_max, T_e_max, Paux, Nn, NTi):
     )
 
 
+# what an axis can hold fixed while its own parameter varies, and what holding
+# it means. _resolve_axes turns each into the settings-file keys every cell sets
+SCAN_HOLDS = {
+    "aspect_ratio": "R/a, by moving a with R (or R with a)",
+    "a": "the minor radius, which is what happens anyway",
+    "I_P": "the plasma current",
+    "qstar": "q*, by re-deriving I_P in every cell",
+    "B_0": "the on-axis field",
+}
+
+# the settings attributes a relative ('scale') axis multiplies, for keys whose
+# value can be derived rather than read directly from the file
+_SCALE_BASES = {
+    "R": "R",
+    "R_0": "R",
+    "a": "a",
+    "kappa": "kappa",
+    "delta": "delta",
+    "B_0": "B0",
+    "I_P": "Ip",
+    "H_fac": "H_fac",
+    "tipeak_over_tepeak": "tipeak_over_tepeak",
+}
+
+
+def _qstar(settings) -> float:
+    """q* of a settings object; get_Ip is linear in 1/qstar."""
+    return (
+        phys.get_Ip(1.0, settings.R, settings.a, settings.B0, settings.kappa)
+        / settings.Ip
+    )
+
+
 class ScanAxis:
     """
     One scanned parameter and the values it takes.
+
+    scale, if given, is the same values relative to the base settings, kept
+    for labels. hold names quantities kept fixed while this parameter varies
+    (see SCAN_HOLDS). An implicit axis stands in for the one a
+    one-dimensional scan leaves out: it has a single cell and overrides
+    nothing.
     """
 
-    def __init__(self, parameter: str, values) -> None:
+    def __init__(
+        self, parameter: str, values, scale=None, hold=(), implicit: bool = False
+    ) -> None:
         self.parameter = str(parameter)
         self.values = list(values)
+        self.scale = None if scale is None else [float(f) for f in scale]
+        self.hold = [str(h) for h in hold]
+        self.implicit = implicit
         # never a bare 'n' or 'T': Dataset.T is transpose
-        self.dim = "scan_" + re.sub(r"\W", "_", self.parameter)
+        self.dim = (
+            "scan_fixed" if implicit else "scan_" + re.sub(r"\W", "_", self.parameter)
+        )
+        # filled in by POPCON_scan once the base settings are known: the extra
+        # settings-file keys each cell sets because of 'hold'
+        self.extras = [{} for _ in self.values]
 
     @property
     def label(self) -> str:
-        return self.parameter
+        if not self.hold:
+            return self.parameter
+        return f"{self.parameter} ({', '.join(self.hold)} fixed)"
+
+    def value_label(self, k: int) -> str:
+        text = f"{self.parameter} = {_fmt_value(self.values[k])}"
+        if self.scale is not None:
+            text += f" (x{_fmt_value(self.scale[k])})"
+        return text
+
+    def overrides(self, k: int) -> dict:
+        """The settings-file keys cell k along this axis replaces."""
+        if self.implicit:
+            return {}
+        return {self.parameter: self.values[k], **self.extras[k]}
 
     def __len__(self) -> int:
         return len(self.values)
 
     def __repr__(self) -> str:
-        return f"ScanAxis({self.parameter!r}, {self.values!r})"
+        extra = f", hold={self.hold!r}" if self.hold else ""
+        return f"ScanAxis({self.parameter!r}, {self.values!r}{extra})"
 
 
 def _parse_axis_spec(spec, which):
     """
     Accepts the several ways a scan axis can be written and returns a
-    ScanAxis. Handles ('I_P', [...]), {'parameter':..., 'values': [...]} and
-    {'parameter':..., 'min':..., 'max':..., 'N':...}.
+    ScanAxis. Handles ('I_P', [...]), {'parameter':..., 'values': [...]},
+    {'parameter':..., 'min':..., 'max':..., 'N':...} and
+    {'parameter':..., 'scale': [...]}, any of the mappings optionally with
+    'hold': [...]. A 'scale' axis has no values yet; POPCON_scan fills them
+    in from the base settings.
     """
     if isinstance(spec, (tuple, list)) and len(spec) == 2:
         parameter, rest = spec
@@ -3308,22 +3453,43 @@ def _parse_axis_spec(spec, which):
     parameter = spec.pop("parameter", None)
     if parameter is None:
         raise ValueError(f"{which}: the scan specification needs a 'parameter'.")
+    hold = spec.pop("hold", [])
+    if isinstance(hold, str):
+        hold = [hold]
+    unknown = set(spec) - {"values", "scale", "min", "max", "N"}
+    if unknown:
+        raise ValueError(
+            f"{which}: unknown key(s) {', '.join(sorted(unknown))} in the "
+            f"specification for '{parameter}'. Expected 'values', 'scale', "
+            f"'min'/'max'/'N' and optionally 'hold'."
+        )
+    given = [k for k in ("values", "scale", "min") if k in spec]
+    if len(given) > 1:
+        raise ValueError(
+            f"{which}: give only one of 'values', 'scale' or 'min'/'max'/'N' "
+            f"for '{parameter}', got {', '.join(given)}."
+        )
 
     if "values" in spec:
-        return ScanAxis(parameter, list(spec["values"]))
+        return ScanAxis(parameter, list(spec["values"]), hold=hold)
+    if "scale" in spec:
+        scale = np.asarray(spec["scale"], dtype=float).tolist()
+        return ScanAxis(parameter, [None] * len(scale), scale=scale, hold=hold)
 
     missing = [k for k in ("min", "max", "N") if k not in spec]
     if missing:
         raise ValueError(
-            f"{which}: scanning '{parameter}' needs either 'values', or all of "
-            f"'min', 'max' and 'N'. Missing: {', '.join(missing)}."
+            f"{which}: scanning '{parameter}' needs one of 'values', 'scale', or "
+            f"all of 'min', 'max' and 'N'. Missing: {', '.join(missing)}."
         )
     # N is validated in _check_scan; guard only against linspace throwing here
     N = int(spec["N"])
     if N < 1:
-        return ScanAxis(parameter, [])
+        return ScanAxis(parameter, [], hold=hold)
     return ScanAxis(
-        parameter, np.linspace(float(spec["min"]), float(spec["max"]), N).tolist()
+        parameter,
+        np.linspace(float(spec["min"]), float(spec["max"]), N).tolist(),
+        hold=hold,
     )
 
 
@@ -3347,6 +3513,13 @@ class POPCON_scan:
         sc.run_scan()
         sc.plot()
         sc.plot_metric('Q')
+
+    Give only one of rows and cols to vary one parameter on its own. An axis
+    can give 'scale' (values relative to the settings file) instead of
+    'values', and 'hold' to keep other quantities fixed as it varies:
+
+        scan={'rows': {'parameter': 'R', 'scale': [0.75, 1.0, 1.25],
+                       'hold': ['aspect_ratio', 'qstar']}}
 
     The scan can equally be written as a `scan:` block in the settings file.
     Parameters are named as they appear in the settings file, and the whole
@@ -3387,7 +3560,7 @@ class POPCON_scan:
     def _read_spec(self, spec):
         if not isinstance(spec, dict):
             raise ValueError(
-                "The scan specification must be a mapping with 'rows' and "
+                "The scan specification must be a mapping with 'rows' and/or "
                 f"'cols' keys, got {type(spec).__name__}."
             )
         unknown = set(spec) - {"rows", "cols"}
@@ -3396,9 +3569,97 @@ class POPCON_scan:
                 f"Unknown key(s) in the scan specification: "
                 f"{', '.join(sorted(unknown))}. Expected 'rows' and 'cols'."
             )
+        if not spec:
+            raise ValueError("The scan specification needs 'rows' or 'cols'.")
         row = _parse_axis_spec(spec["rows"], "rows") if "rows" in spec else None
         col = _parse_axis_spec(spec["cols"], "cols") if "cols" in spec else None
+        # a one-dimensional scan: the missing axis is a single cell that only
+        # labels itself, so every other part of the scan stays two-dimensional
+        if row is None:
+            row = ScanAxis("", [0.0], implicit=True)
+        if col is None:
+            col = ScanAxis("", [0.0], implicit=True)
         return row, col
+
+    def _base_value(self, parameter):
+        """The base settings' value of a settings-file key, for 'scale'."""
+        s = self.base_settings
+        if parameter == "qstar":
+            return _qstar(s)
+        if parameter in _SCALE_BASES:
+            return float(getattr(s, _SCALE_BASES[parameter]))
+        value = s.rawdata.get(parameter)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return None
+
+    def _resolve_axes(self, bad) -> None:
+        """
+        Turns 'scale' into absolute values and 'hold' into the extra keys
+        each cell sets, now that the base settings are known.
+        """
+        s = self.base_settings
+        for axis, which in ((self.row, "rows"), (self.col, "cols")):
+            if axis.implicit:
+                continue
+            p = axis.parameter
+            if axis.scale is not None:
+                base = self._base_value(p)
+                if base is None:
+                    bad.append(
+                        f"{which}: '{p}' has no numeric value in the settings to "
+                        f"scale; give 'values' instead."
+                    )
+                    continue
+                axis.values = [f * base for f in axis.scale]
+                axis.extras = [{} for _ in axis.values]
+
+            unknown = [h for h in axis.hold if h not in SCAN_HOLDS]
+            if unknown:
+                bad.append(
+                    f"{which}: cannot hold {', '.join(unknown)} fixed. Available: "
+                    f"{', '.join(SCAN_HOLDS)}."
+                )
+                continue
+            holds = set(axis.hold)
+            if {"aspect_ratio", "a"} <= holds:
+                bad.append(f"{which}: cannot hold both aspect_ratio and a fixed.")
+            if {"I_P", "qstar"} <= holds:
+                bad.append(
+                    f"{which}: cannot hold both I_P and qstar fixed; at fixed "
+                    f"field one determines the other."
+                )
+            if "aspect_ratio" in holds and p not in ("R", "R_0", "a"):
+                bad.append(
+                    f"{which}: holding aspect_ratio fixed needs the axis to scan "
+                    f"R, R_0 or a, not '{p}'."
+                )
+            if p in holds:
+                bad.append(f"{which}: cannot scan '{p}' while holding it fixed.")
+
+            qstar0 = _qstar(s)
+            for k, v in enumerate(axis.values):
+                extra = {}
+                if "aspect_ratio" in holds and v is not None:
+                    if p in ("R", "R_0"):
+                        extra["a"] = v * s.a / s.R
+                    elif p == "a":
+                        extra["R"] = v * s.R / s.a
+                if "qstar" in holds:
+                    extra["qstar"] = qstar0
+                if "I_P" in holds:
+                    extra["I_P"] = s.Ip
+                if "B_0" in holds:
+                    extra["B_0"] = s.B0
+                axis.extras[k] = extra
+
+    @staticmethod
+    def _axis_keys(axis):
+        """Every settings-file key an axis sets, with R_0 counted as R."""
+        if axis.implicit:
+            return set()
+        keys = {axis.parameter} | {k for e in axis.extras for k in e}
+        return {"R" if k == "R_0" else k for k in keys}
 
     def _check_scan(self) -> None:
         """
@@ -3408,20 +3669,19 @@ class POPCON_scan:
         bad, warn = [], []
         s = self.base_settings
 
-        if self.row is None or self.col is None:
+        self._resolve_axes(bad)
+
+        if self.row.implicit and self.col.implicit:
+            bad.append("the scan needs at least one of 'rows' and 'cols'.")
+        clash = self._axis_keys(self.row) & self._axis_keys(self.col)
+        if clash:
             bad.append(
-                "a scan needs two parameters, given as 'rows' and 'cols'. "
-                "To vary just one, give the other a single value."
+                f"rows and cols both set {', '.join(sorted(clash))}; each "
+                f"setting may come from only one axis (hold counts too)."
             )
-        if self.row is not None and self.col is not None:
-            if self.row.parameter == self.col.parameter:
-                bad.append(
-                    f"rows and cols both scan '{self.row.parameter}'; they must "
-                    f"be different parameters."
-                )
 
         for axis, which in ((self.row, "rows"), (self.col, "cols")):
-            if axis is None:
+            if axis.implicit:
                 continue
             p = axis.parameter
             if p in UNSCANNABLE_REASONS:
@@ -3439,17 +3699,40 @@ class POPCON_scan:
                 warn.append(
                     f"{which}: '{p}' has repeated values, so some cells will be identical."
                 )
+            # Zeff_target only sets an impurity fraction when 'impurity' says
+            # which one; without it every cell would come out the same
+            if p == "Zeff_target" and "impurity" not in s.rawkeys:
+                bad.append(
+                    f"{which}: scanning Zeff_target needs 'impurity' in the "
+                    f"settings file, to say which impurity carries it. Without "
+                    f"it Zeff_target has no effect and every cell is identical."
+                )
             # the gEQDSK trap: __get_geometry overrides these from the
             # equilibrium, and always takes the ohmic current from it
-            if s.gfilename != "" and p in GEQDSK_OWNED_KEYS:
+            if s.gfilename == "":
+                continue
+            keys = {axis.parameter} | {k for e in axis.extras for k in e}
+            owned = keys & GEQDSK_OWNED_KEYS
+            if s.gfile_rescale:
+                owned -= GEQDSK_RESCALABLE_KEYS
+            if owned:
+                rescalable = owned <= GEQDSK_RESCALABLE_KEYS
                 bad.append(
-                    f"{which}: '{p}' cannot be scanned while gfilename is set "
-                    f"({os.path.basename(s.gfilename)}). The geometry is read from "
-                    f"the gEQDSK, which overrides R, a, kappa, delta and Ip whenever "
-                    f"they differ from the settings by more than 10%, and always "
+                    f"{which}: {', '.join(sorted(owned))} cannot be scanned while "
+                    f"gfilename is set ({os.path.basename(s.gfilename)}). The "
+                    f"geometry is read from the gEQDSK, which overrides R, a, "
+                    f"kappa, delta and Ip whenever they differ from the settings "
+                    f"by more than 10%, and always "
                     f"takes the ohmic current from the equilibrium. Some cells would "
                     f"silently be identical and others not. Scan B_0 or H_fac "
                     f"instead, or clear gfilename to use parabolic profiles."
+                    + (
+                        " To scan R, a or the current with this equilibrium, set "
+                        "gfile_rescale: True, which moves and resizes it to each "
+                        "cell's R and a and gives it that cell's current."
+                        if rescalable
+                        else ""
+                    )
                 )
 
         for w in warn:
@@ -3460,6 +3743,14 @@ class POPCON_scan:
                 f"{self.settingsfile}:\n  - " + "\n  - ".join(bad)
             )
 
+    def _cell_label(self, i, j) -> str:
+        parts = [
+            f"{a.parameter}={_fmt_value(a.values[k])}"
+            for a, k in ((self.row, i), (self.col, j))
+            if not a.implicit
+        ]
+        return ", ".join(parts)
+
     def _build_cells(self) -> None:
         """
         Builds every cell's POPCON up front, so that a settings problem at one
@@ -3469,9 +3760,9 @@ class POPCON_scan:
         self.cells = [[None] * len(self.col) for _ in range(len(self.row))]
         self.cell_overrides = [[None] * len(self.col) for _ in range(len(self.row))]
 
-        for i, vi in enumerate(self.row.values):
-            for j, vj in enumerate(self.col.values):
-                overrides = {self.row.parameter: vi, self.col.parameter: vj}
+        for i in range(len(self.row)):
+            for j in range(len(self.col)):
+                overrides = {**self.row.overrides(i), **self.col.overrides(j)}
                 self.cell_overrides[i][j] = overrides
                 try:
                     with contextlib.redirect_stdout(io.StringIO()):
@@ -3484,8 +3775,7 @@ class POPCON_scan:
                     self.cells[i][j] = cell
                 except (ValueError, KeyError) as e:
                     problems.append(
-                        f"cell ({i}, {j}) with {self.row.parameter}="
-                        f"{_fmt_value(vi)}, {self.col.parameter}={_fmt_value(vj)}: {e}"
+                        f"cell ({i}, {j}) with {self._cell_label(i, j)}: {e}"
                     )
 
         if problems:
@@ -3526,10 +3816,7 @@ class POPCON_scan:
         for i in range(nrow):
             for j in range(ncol):
                 cell = self.cells[i][j]
-                label = (
-                    f"{self.row.parameter}={_fmt_value(self.row.values[i])}, "
-                    f"{self.col.parameter}={_fmt_value(self.col.values[j])}"
-                )
+                label = self._cell_label(i, j)
                 start = datetime.datetime.now()
                 if quiet:
                     # read() and __report_invalid print unconditionally; across
@@ -3571,8 +3858,9 @@ class POPCON_scan:
     @property
     def scanvariables(self):
         return {
-            self.row.parameter: np.asarray(self.row.values),
-            self.col.parameter: np.asarray(self.col.values),
+            a.parameter: np.asarray(a.values)
+            for a in (self.row, self.col)
+            if not a.implicit
         }
 
     @property
@@ -3624,7 +3912,7 @@ class POPCON_scan:
         ds[self.row.dim].attrs["parameter"] = self.row.parameter
         ds[self.col.dim].attrs["parameter"] = self.col.parameter
         ds.attrs["scan_parameters"] = json.dumps(
-            [self.row.parameter, self.col.parameter]
+            [a.parameter for a in (self.row, self.col) if not a.implicit]
         )
         return ds
 
@@ -3640,6 +3928,71 @@ class POPCON_scan:
         # the tick labels plot_metric puts on the axes
         return reduced.transpose(self.row.dim, self.col.dim)
 
+    def operating_point(
+        self,
+        T_i_avg: float,
+        n_G_frac: float = None,
+        n_e_20_avg: float = None,
+        fields=(
+            "Pfusion",
+            "Paux",
+            "Q",
+            "Pohmic",
+            "Psol",
+            "f_rad",
+            "tauE",
+            "betaN",
+            "H98",
+            "H89",
+        ),
+    ):
+        """
+        The same operating point in every cell, as one table: the grid point
+        nearest the given volume-averaged ion temperature and either
+        Greenwald fraction or volume-averaged density (10^20 m^-3). Fixing the
+        Greenwald fraction follows n_G = Ip/(pi a^2) as the scan changes the
+        current or minor radius; fixing n_e_20_avg holds the density itself.
+        Points with no physical solution come back as NaN.
+        """
+        import pandas as pd
+
+        if (n_G_frac is None) == (n_e_20_avg is None):
+            raise ValueError("Give exactly one of n_G_frac and n_e_20_avg.")
+        rows = []
+        for i, j in np.ndindex(*self.shape):
+            cell = self.cells[i][j]
+            if cell is None or not hasattr(cell, "output"):
+                raise RuntimeError("Call run_scan() first.")
+            out = cell.output
+            if n_G_frac is not None:
+                ni = int(np.abs(out.n_G_frac.values - n_G_frac).argmin())
+            else:
+                ni = int(np.abs(out.n_e_20_avg.values - n_e_20_avg).argmin())
+            tj = int(np.abs(out.T_i_avg.values - T_i_avg).argmin())
+            pt = out.isel({DIM_N: ni, DIM_T: tj})
+            valid = float(pt.Paux) < UNPHYSICAL_PLOT_CUTOFF
+
+            record = {
+                a.parameter: a.values[k]
+                for a, k in ((self.row, i), (self.col, j))
+                if not a.implicit
+            }
+            st = cell.settings
+            record.update(
+                R=st.R,
+                a=st.a,
+                B_0=st.B0,
+                I_P=st.Ip,
+                qstar=_qstar(st),
+                n_G_frac=float(pt.n_G_frac),
+                n_e_20_avg=float(pt.n_e_20_avg),
+                T_i_avg=float(pt.T_i_avg),
+            )
+            for name in fields:
+                record[name] = float(pt[name]) if valid else np.nan
+            rows.append(record)
+        return pd.DataFrame(rows)
+
     # -------------------------------------------------------------------
     # Plotting
     # -------------------------------------------------------------------
@@ -3650,7 +4003,7 @@ class POPCON_scan:
         only right for the Greenwald fraction: an absolute density axis moves
         with n_G = Ip/(pi a^2) and would be misleading if shared.
         """
-        scanned = {self.row.parameter, self.col.parameter}
+        scanned = self._axis_keys(self.row) | self._axis_keys(self.col)
         yax = self.cells[0][0].plotsettings.yax
         sharey = yax == "nG" and not (scanned & {"nmin_frac", "nmax_frac"})
         sharex = not (scanned & {"Tmin_keV", "Tmax_keV", "tipeak_over_tepeak"})
@@ -3749,18 +4102,12 @@ class POPCON_scan:
                     )
                     if self.base_settings.verbosity > 0:
                         print(f"  cell ({i}, {j}) not plotted: {e}")
-                if i == 0:
-                    ax.set_title(
-                        f"{self.col.label} = {_fmt_value(self.col.values[j])}",
-                        fontsize=11,
-                    )
-                if j == ncol - 1:
+                if i == 0 and not self.col.implicit:
+                    ax.set_title(self.col.value_label(j), fontsize=11)
+                if j == ncol - 1 and not self.row.implicit:
                     twin = ax.twinx()
                     twin.set_yticks([])
-                    twin.set_ylabel(
-                        f"{self.row.label} = {_fmt_value(self.row.values[i])}",
-                        fontsize=11,
-                    )
+                    twin.set_ylabel(self.row.value_label(i), fontsize=11)
                 if sharex and i < nrow - 1:
                     ax.set_xlabel("")
                 if sharey and j > 0:
@@ -3776,7 +4123,8 @@ class POPCON_scan:
             fig.legend(handles, labels, loc="center left", bbox_to_anchor=(1.0, 0.5))
 
         fig.suptitle(
-            f"{self.base_settings.name}: {self.row.parameter} vs {self.col.parameter}",
+            f"{self.base_settings.name}: "
+            + " vs ".join(a.label for a in (self.row, self.col) if not a.implicit),
             fontsize=13,
         )
         fig.tight_layout()
@@ -3814,8 +4162,12 @@ class POPCON_scan:
         ax.set_xticklabels([_fmt_value(v) for v in self.col.values])
         ax.set_yticks(range(self.shape[0]))
         ax.set_yticklabels([_fmt_value(v) for v in self.row.values])
-        ax.set_xlabel(self.col.parameter)
-        ax.set_ylabel(self.row.parameter)
+        ax.set_xlabel(self.col.label)
+        ax.set_ylabel(self.row.label)
+        if self.col.implicit:
+            ax.set_xticks([])
+        if self.row.implicit:
+            ax.set_yticks([])
         ax.set_title(f"{reduce} {name} over the n,T grid")
 
         finite = z[np.isfinite(z)]
@@ -3873,13 +4225,15 @@ class POPCON_scan:
         with open(savedir.joinpath("scan.json"), "w") as f:
             json.dump(
                 {
-                    "rows": {
-                        "parameter": self.row.parameter,
-                        "values": self.row.values,
-                    },
-                    "cols": {
-                        "parameter": self.col.parameter,
-                        "values": self.col.values,
+                    **{
+                        which: {
+                            "parameter": axis.parameter,
+                            "values": axis.values,
+                            "scale": axis.scale,
+                            "hold": axis.hold,
+                        }
+                        for axis, which in ((self.row, "rows"), (self.col, "cols"))
+                        if not axis.implicit
                     },
                     "overrides": self.cell_overrides,
                 },
@@ -3939,10 +4293,19 @@ class POPCON_scan:
             plotsettingsfile=str(readdir.joinpath("plotsettings.yaml")),
             scalinglawfile=str(readdir.joinpath("scalinglaws.yaml")),
             scan={
-                "rows": (spec["rows"]["parameter"], spec["rows"]["values"]),
-                "cols": (spec["cols"]["parameter"], spec["cols"]["values"]),
+                which: {
+                    "parameter": spec[which]["parameter"],
+                    "values": spec[which]["values"],
+                    "hold": spec[which].get("hold", []),
+                }
+                for which in ("rows", "cols")
+                if which in spec
             },
         )
+        # values were saved absolute; the relative factors only label them
+        for axis, which in ((sc.row, "rows"), (sc.col, "cols")):
+            if which in spec and spec[which].get("scale") is not None:
+                axis.scale = spec[which]["scale"]
 
         ds = xr.load_dataset(readdir.joinpath("arrays.nc"))
         sc._output = ds

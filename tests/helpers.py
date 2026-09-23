@@ -48,12 +48,14 @@ UNPHYSICAL = 99998.0
 def write_settings(tmp_path, base=SETTINGS, name="settings.yaml", **overrides):
     """
     A settings file built from an example with some keys replaced, detached
-    from any gEQDSK/profile files so it is self-contained.
+    from any gEQDSK/profile files so it is self-contained, and from the
+    example's scan block so a test's scan is the only one in play.
     """
     with open(base) as fh:
         data = yaml.safe_load(fh)
     data["gfilename"] = ""
     data["profsfilename"] = ""
+    data.pop("scan", None)
     data.update(overrides)
     path = tmp_path / name
     with open(path, "w") as fh:
@@ -71,6 +73,9 @@ def solve_small_manta(parallel=False):
     pc.settings.NTi = SMALL_GRID["NTi"]
     pc.settings.nr = SMALL_GRID["nr"]
     pc.settings.parallel = parallel
+    # the golden values pin the plain gEQDSK path, where the equilibrium's own
+    # R, a and current are used
+    pc.settings.gfile_rescale = False
     pc.settings.verbosity = 0
     pc.run_POPCON()
     return pc

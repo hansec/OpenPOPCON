@@ -37,17 +37,17 @@ openpopcon examples ./my_scans
 cd my_scans/MANTA
 ```
 
-Each example directory has its own settings file, a notebook, and where applicable a gEQDSK and a profiles file.
+Apart from the two NSF examples, which keep their original files, each example directory has the same layout: a `POPCON_input_example.yaml` settings file with a `scan:` block, a `plotsettings.yml` that lists only what differs from the defaults, a `<name>_ex.ipynb` notebook that runs a POPCON and then the scan, and where applicable a gEQDSK and a profiles file.
 
 | Example | Machine | Notes |
 | --- | --- | --- |
-| `MANTA` | 4.55 m, 11 T, 10 MA, negative triangularity | gEQDSK + profiles file |
-| `SPARC` | 1.85 m, 12.2 T, 8.7 MA | parabolic profiles |
-| `ITER` | 6.2 m, 5.3 T, 15 MA | 500 MW at Q = 10, parabolic profiles |
-| `CENTAUR` | 2.0 m, 10.9 T, 9.6 MA, negative triangularity | 40 MW breakeven, `H_NT23` scaling |
-| `radiative_ARC` | 4.2 m, 11.5 T, 14 MA | radiative L-mode, `H89` |
-| `NSF` | 0.8 m, 3 T, 1 MA, negative triangularity | gEQDSK + profiles file |
-| `NSF_NT_CMOD` | 0.8 m, 3 T, 1 MA | parabolic profiles |
+| `MANTA` | 4.55 m, 11 T, 10 MA, negative triangularity | gEQDSK + profiles file; scans `B_0` x `H_fac` |
+| `SPARC` | 1.85 m, 12.2 T, 8.7 MA | parabolic profiles; scans `R_0` x `B_0` |
+| `ITER` | 6.2 m, 5.3 T, 15 MA | 500 MW at Q = 10, parabolic profiles; scans `I_P` x `H_fac` |
+| `CENTAUR` | 2.0 m, 10.9 T, 9.6 MA, negative triangularity | 40 MW breakeven, `H_NT23` scaling; scans `I_P` x `B_0` |
+| `radiative_ARC` | 4.2 m, 11.5 T, 14 MA | radiative L-mode, `H89`; scans `Zeff_target` x `H_fac` |
+| `NSF` | 0.8 m, 3 T, 1 MA, negative triangularity | gEQDSK + profiles file; older layout, no scan block |
+| `NSF_NT_CMOD` | 0.8 m, 3 T, 1 MA | parabolic profiles; older layout, no scan block or notebook |
 
 `ITER` and `CENTAUR` deliberately use parabolic profiles rather than a gEQDSK, which keeps their geometry free for `POPCON_scan` to vary. Each of the two carries a note at the bottom of its settings file on how closely the 0-D result tracks the published design point, and where it does not.
 
@@ -113,7 +113,7 @@ sc.plot_metric("Q", "max")     # one number per cell, as a heatmap
 sc.output                      # every cell in one xarray Dataset
 ```
 
-The same scan can live in the settings file instead, which is what the `ITER` and `CENTAUR` examples do:
+The same scan can live in the settings file instead, which is what every example except the two NSF ones does:
 
 ```yaml
 scan:
@@ -123,9 +123,42 @@ scan:
 
 Each axis takes either an explicit list of `values` or a `min`/`max`/`N` range, and a `scan=` argument overrides the settings file. Parameters are named as they appear in the settings file, and the whole settings derivation is re-run for each cell rather than a solved field being patched, so scanning `R` on a file that specifies `qstar` correctly re-derives `Ip`. `openpopcon.SCANNABLE_SETTINGS_KEYS` lists what can be varied.
 
+The major radius can be given as either `R` or `R_0` (not both), matching `B_0`, and either name can be scanned whichever one the settings file uses.
+
 Every panel is drawn on the same contour levels so the cells can be compared directly, and the y axis is shared only when it is the Greenwald fraction, since an absolute density axis moves with `n_G = I_p / (pi a^2)`.
 
-Scanning `R`, `a`, `kappa`, `delta` or `I_P` on an example that supplies a gEQDSK is refused rather than silently ignored: `__get_geometry` takes those from the equilibrium, and always takes the ohmic current from it, so some cells would come out identical and others not. Scan `B_0` or `H_fac` on those examples, or clear `gfilename` to use parabolic profiles.
+#### One parameter at a time, relative changes, and what stays fixed
+
+Give only `rows` (or only `cols`) to vary one parameter on its own. `scale` gives the values relative to the settings file instead of absolutely, and `hold` names what stays fixed while the parameter varies:
+
+```python
+# the field on its own, +-25%
+sc = op.POPCON_scan(settingsfile=settingsfile, plotsettingsfile=plotsettingsfile,
+                    scan={"rows": {"parameter": "B_0", "scale": [0.75, 1.0, 1.25]}})
+
+# the major radius +-25%, three ways
+{"rows": {"parameter": "R", "scale": [0.75, 1.0, 1.25], "hold": ["aspect_ratio", "I_P"]}}
+{"rows": {"parameter": "R", "scale": [0.75, 1.0, 1.25], "hold": ["aspect_ratio", "qstar"]}}
+{"rows": {"parameter": "R", "scale": [0.75, 1.0, 1.25], "hold": ["a", "qstar"]}}
+```
+
+| `hold` | effect in every cell |
+| --- | --- |
+| `aspect_ratio` | moves `a` with `R` (or `R` with `a`) so `R/a` stays at the base value |
+| `a` | the minor radius stays put, which is what happens anyway |
+| `I_P` | the current stays at the base value |
+| `qstar` | `q*` stays at the base value, re-deriving `I_P` from each cell's `R`, `a`, `B_0` and `kappa` |
+| `B_0` | the on-axis field stays at the base value, even if the file derives it from `B_coil` |
+
+The same keys work in a settings file's `scan:` block. `hold` counts as setting those keys, so the other axis cannot also scan them. Scanning `Zeff_target` is refused unless the settings file also gives `impurity`: without it `Zeff_target` has no effect and every cell would come out the same.
+
+`sc.operating_point(T_i_avg=8.0, n_G_frac=0.5)` returns one row per cell at the same point on the grid: the cell's `R`, `a`, `B_0`, `I_P` and `q*`, plus the fusion power, auxiliary power, Q and the rest. Give `n_e_20_avg` instead of `n_G_frac` to hold the density itself rather than the Greenwald fraction, which moves with `I_P / a^2`. At a fixed density and temperature the fusion power does not depend on the field or the confinement factor; those move the power needed to get there, so compare `Paux` and `Q` as well as `Pfusion`.
+
+#### gEQDSK examples
+
+Without further settings, a gEQDSK's own geometry and current win: `__get_geometry` takes `R`, `a`, `kappa`, `delta` and `I_P` from the equilibrium when they differ from the settings by more than 10%, and always takes the ohmic current from it. Scanning any of them is then refused rather than silently giving some identical cells.
+
+`gfile_rescale: True`, which the `MANTA` example sets, uses the equilibrium for its shape and profiles only. Every flux surface is mapped onto the settings `R` and `a`, as `r -> R + (a/a_eq)(r - R_eq)` with `z` scaled the same way about the plasma mid-height, and the current profile carries the settings `I_P`. That makes `R`, `R_0`, `a`, `I_P` and `qstar` scannable; `kappa` and `delta` stay the equilibrium's. The flux surface volumes and areas are exact for the mapped surfaces. The q profile and trapped particle fraction are rescaled to leading order in the inverse aspect ratio, `q ~ a^2 B_0 / (R I_p)` and `f_t ~ sqrt(a/R)`; that is not a new equilibrium, so keep geometry scans near the file's own values.
 
 `sc.write_output()` saves the base settings, the scan specification, the combined arrays and the grid plot; `op.POPCON_scan.read_output(name)` reads it back.
 

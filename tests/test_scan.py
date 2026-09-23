@@ -5,13 +5,15 @@ The failure mode worth guarding hardest is a scan that silently produces
 identical cells, because it looks exactly like a scan that worked.
 """
 
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import yaml
 
 import openpopcon as op
-from openpopcon.core import DIM_N, DIM_T
+from openpopcon.core import DIM_N, DIM_T, _gfile_geometry
 
 from helpers import (
     PLOTSETTINGS,
@@ -191,7 +193,7 @@ def test_python_scan_overrides_the_yaml_block(tmp_path):
 
 def test_shipped_examples_with_scan_blocks_still_load_as_plain_popcons():
     # 'scan' is in KNOWN_SETTINGS_KEYS, so it must not be reported as a typo
-    for name in ("CENTAUR", "ITER"):
+    for name in ("CENTAUR", "ITER", "MANTA", "SPARC", "radiative_ARC"):
         d = op.example_dir(name)
         pc = op.POPCON(
             settingsfile=f"{d}/POPCON_input_example.yaml",
@@ -201,11 +203,27 @@ def test_shipped_examples_with_scan_blocks_still_load_as_plain_popcons():
 
 
 BAD_SCANS = {
+    "unknown_hold": {"rows": {"parameter": "R", "scale": [0.9, 1.1], "hold": "V"}},
+    "hold_I_P_and_qstar": {
+        "rows": {"parameter": "R", "scale": [0.9, 1.1], "hold": ["I_P", "qstar"]}
+    },
+    "aspect_ratio_off_R": {
+        "rows": {"parameter": "B_0", "scale": [0.9, 1.1], "hold": "aspect_ratio"}
+    },
+    "hold_what_is_scanned": {
+        "rows": {"parameter": "I_P", "values": ROWS, "hold": "I_P"}
+    },
+    "hold_clashes_with_other_axis": {
+        "rows": {"parameter": "R", "scale": [0.9, 1.1], "hold": "aspect_ratio"},
+        "cols": ("a", [0.5, 0.6]),
+    },
+    "R_and_R_0_on_both_axes": {"rows": ("R", [1.6, 2.0]), "cols": ("R_0", [1.7, 1.9])},
+    "scale_without_a_number": {"rows": {"parameter": "scalinglaw", "scale": [1, 2]}},
+    "values_and_scale": {"rows": {"parameter": "R", "values": [1.8], "scale": [1]}},
     "unknown_parameter": {"rows": ("Bfield", ROWS), "cols": ("B_0", COLS)},
     "unscannable_Nn": {"rows": ("Nn", [8, 16]), "cols": ("B_0", COLS)},
     "unscannable_gfilename": {"rows": ("gfilename", ["a", "b"]), "cols": ("B_0", COLS)},
     "same_parameter": {"rows": ("B_0", [9.0, 11.0]), "cols": ("B_0", COLS)},
-    "only_one_axis": {"rows": ("I_P", ROWS)},
     "empty_values": {"rows": ("I_P", []), "cols": ("B_0", COLS)},
 }
 
@@ -227,15 +245,109 @@ def test_no_scan_at_all_is_an_error(tmp_path):
         )
 
 
-@pytest.mark.parametrize("parameter", ["R", "a", "kappa", "delta", "I_P", "qstar"])
-def test_geqdsk_geometry_scan_rejected(parameter):
-    # MANTA has a gfilename, and __get_geometry takes the geometry and the
-    # ohmic current from the equilibrium regardless of the settings
+def _manta_settings(tmp_path, **overrides):
+    # MANTA keeps its gEQDSK here, unlike write_settings
+    with open(SETTINGS) as fh:
+        data = yaml.safe_load(fh)
+    data.pop("scan", None)
+    data.update(verbosity=0, parallel=False, **SMALL_GRID, **overrides)
+    for key in ("gfilename", "profsfilename"):
+        data[key] = os.path.join(os.path.dirname(SETTINGS), data[key])
+    path = tmp_path / "manta.yaml"
+    with open(path, "w") as fh:
+        yaml.safe_dump(data, fh)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "parameter", ["R", "R_0", "a", "kappa", "delta", "I_P", "qstar"]
+)
+def test_geqdsk_geometry_scan_rejected(tmp_path, parameter):
+    # without gfile_rescale, __get_geometry takes the geometry and the ohmic
+    # current from the equilibrium regardless of the settings
     with pytest.raises(ValueError, match="gfilename"):
         op.POPCON_scan(
-            settingsfile=SETTINGS,
+            settingsfile=_manta_settings(tmp_path, gfile_rescale=False),
             plotsettingsfile=PLOTSETTINGS,
             scan={"rows": (parameter, [1.0, 2.0]), "cols": ("B_0", COLS)},
+        )
+
+
+def test_geqdsk_rejection_points_at_gfile_rescale(tmp_path):
+    with pytest.raises(ValueError, match="gfile_rescale"):
+        op.POPCON_scan(
+            settingsfile=_manta_settings(tmp_path, gfile_rescale=False),
+            plotsettingsfile=PLOTSETTINGS,
+            scan={"rows": ("R", [4.0, 5.0]), "cols": ("B_0", COLS)},
+        )
+
+
+@pytest.mark.parametrize("parameter", ["kappa", "delta"])
+def test_gfile_rescale_keeps_the_shape_locked(tmp_path, parameter):
+    with pytest.raises(ValueError, match="gfilename"):
+        op.POPCON_scan(
+            settingsfile=_manta_settings(tmp_path, gfile_rescale=True),
+            plotsettingsfile=PLOTSETTINGS,
+            scan={"rows": (parameter, [1.0, 2.0]), "cols": ("B_0", COLS)},
+        )
+
+
+@pytest.mark.parametrize("parameter", ["R", "R_0"])
+def test_gfile_rescale_scans_major_radius(tmp_path, parameter):
+    sc = op.POPCON_scan(
+        settingsfile=_manta_settings(tmp_path, gfile_rescale=True),
+        plotsettingsfile=PLOTSETTINGS,
+        scan={"rows": (parameter, [4.0, 5.0])},
+    )
+    sc.run_scan(progress=False)
+    small, big = sc.cells[0][0], sc.cells[1][0]
+    # R is kept rather than reset to the equilibrium's 4.55 m
+    assert small.settings.R == 4.0 and big.settings.R == 5.0
+    # the cross-section keeps its shape, so volume goes as R to within the
+    # small offset between the flux surface centroid and the geometric centre
+    V = [c.algorithms.volgrid[-1] for c in (small, big)]
+    assert V[1] / V[0] == pytest.approx(5.0 / 4.0, rel=0.02)
+    assert not np.allclose(small.output.Pfusion, big.output.Pfusion)
+
+
+def test_gfile_rescale_resizes_and_recurrents(tmp_path):
+    sc = op.POPCON_scan(
+        settingsfile=_manta_settings(tmp_path, gfile_rescale=True),
+        plotsettingsfile=PLOTSETTINGS,
+        scan={"rows": ("a", [1.0, 1.2]), "cols": ("I_P", [8.0, 12.0])},
+    )
+    sc.run_scan(progress=False)
+    cells = sc.cells
+    # volume goes as a^2 at fixed R, to within the centroid offset
+    V = [cells[i][0].algorithms.volgrid[-1] for i in range(2)]
+    assert V[1] / V[0] == pytest.approx(1.44, rel=0.02)
+    # and the ohmic current is the settings current, not the equilibrium's
+    assert [cells[0][j].algorithms.Itot for j in range(2)] == [8.0, 12.0]
+    assert not np.allclose(cells[0][0].output.Pohmic, cells[0][1].output.Pohmic)
+
+
+def test_gfile_rescale_at_the_equilibrium_is_the_identity(tmp_path):
+    # given the equilibrium's own R, a, Ip and field, the rescale must change
+    # nothing at all
+    geo = _gfile_geometry(
+        os.path.join(os.path.dirname(SETTINGS), "gMANTA"), SMALL_GRID["nr"]
+    )
+    names = {"R": "geq_R", "a": "geq_a", "I_P": "Ipint", "B_0": "geq_B0"}
+    own = {key: float(geo[name]) for key, name in names.items()}
+    plain = op.POPCON(
+        settingsfile=_manta_settings(tmp_path, gfile_rescale=False, **own),
+        plotsettingsfile=PLOTSETTINGS,
+    )
+    plain.run_POPCON()
+    (tmp_path / "rescaled").mkdir()
+    rescaled = op.POPCON(
+        settingsfile=_manta_settings(tmp_path / "rescaled", gfile_rescale=True, **own),
+        plotsettingsfile=PLOTSETTINGS,
+    )
+    rescaled.run_POPCON()
+    for field in ("Pfusion", "Paux", "Pohmic", "Q"):
+        np.testing.assert_allclose(
+            rescaled.output[field], plain.output[field], rtol=1e-9, err_msg=field
         )
 
 
@@ -287,6 +399,31 @@ def test_scanning_R_redrives_Ip_from_qstar(tmp_path):
         scan={"rows": ("R", [1.6, 2.2]), "cols": ("B_0", COLS)},
     )
     assert sc.cells[0][0].settings.Ip != pytest.approx(sc.cells[1][0].settings.Ip)
+
+
+@pytest.mark.parametrize("given", ["R", "R_0"])
+def test_scanning_R_0_overrides_either_spelling(tmp_path, given):
+    # R_0 is an alias for R. Scanning it on a file that spells the major
+    # radius either way has to change it, not trip over both being present
+    path = _scan_settings(tmp_path)
+    with open(path) as fh:
+        raw = yaml.safe_load(fh)
+    raw[given] = raw.pop("R")
+    with open(path, "w") as fh:
+        yaml.safe_dump(raw, fh)
+
+    sc = op.POPCON_scan(
+        settingsfile=path,
+        plotsettingsfile=SPARC_PLOTSETTINGS,
+        scan={"rows": ("R_0", [1.6, 2.2]), "cols": ("B_0", COLS)},
+    )
+    assert [sc.cells[i][0].settings.R for i in range(2)] == [1.6, 2.2]
+
+
+def test_R_and_R_0_together_rejected(tmp_path):
+    path = _scan_settings(tmp_path, R_0=1.85)
+    with pytest.raises(ValueError, match="R_0"):
+        op.POPCON(settingsfile=path, plotsettingsfile=SPARC_PLOTSETTINGS)
 
 
 # -------------------------------------------------------------------
