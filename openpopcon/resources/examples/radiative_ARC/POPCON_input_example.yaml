@@ -1,66 +1,61 @@
-# OpenPOPCON input file
 #-----------------------------------------------------------------------
-# Machine Paramters
+# OpenPOPCON input file: radiative ARC
+#
+# An ARC-class, high-field D-T reactor run in a radiative L-mode, with
+# krypton seeded to Zeff = 2.1 and the H89 L-mode scaling.
+#
+# Parabolic profiles rather than a gEQDSK, deliberately: it keeps R, a,
+# kappa, delta and I_P available to POPCON_scan, which the gEQDSK path
+# overrides.
 #-----------------------------------------------------------------------
 
 name: "ARC Rad-Lmode"
 
-R: 4.2 # major radius in meters
-a: 1.2 # minor radius in meters
-kappa: 1.6 # elongation
-delta: 0.3 # triangularity
-
 #----------------------
-# I_P and q* can be calculated from each other. Pick one to specify:
-I_P: 14. # plasma current in MA
-# or
-# qstar: 2.5
+# Machine parameters
 #----------------------
 
-#----------------------
-# B_0 and B_coil can be calculated from each other. Pick one to specify:
-B_0: 11.5 # on-axis magnetic field in Tesla
-# or
-# B_coil: 24.0 # magnetic field at the coil in Tesla
-# wall_thickness: 1.1 # wall thickness between magnet and separatrix in meters
-#----------------------
+R: 4.2            # major radius, m (R_0 is accepted as an alias)
+a: 1.2            # minor radius, m
+kappa: 1.6        # elongation
+delta: 0.3        # triangularity
+
+I_P: 14.          # plasma current, MA  (or give qstar instead)
+B_0: 11.5         # on-axis toroidal field, T  (or B_coil and wall_thickness)
+
+tipeak_over_tepeak: 1.1
 
 #----------------------
-tipeak_over_tepeak: 1.1 # ratio of ion to electron temperature at peak
-fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
+# Plasma composition
 #----------------------
 
-#----------------------
-# Impurity Fractions
-# In order, the fractions of:
-# 0 He ash
-# 1 Ne
-# 2 Ar
-# 3 Kr
-# 4 Xe
-# 5 W
-# Impfracs and Z_eff can be calculated from each other. If you specify
-# Z_eff, the impurity fraction for the specified impurity will be overwritten.
+fuel: 2           # 1 D-D, 2 D-T, 3 D-He3
+
+# He, Ne, Ar, Kr, Xe, W
 impurityfractions: [0.02, 0., 0., 0.001, 0., 0.]
-Zeff_target: 2.1 # average effective charge of plasma
-impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
-#----------------------
+
+# krypton is the Zeff carrier; the fraction above is overwritten from this
+Zeff_target: 2.1
+impurity: 3       # 0 He, 1 Ne, 2 Ar, 3 Kr, 4 Xe, 5 W
 
 #----------------------
-scalinglaw: "H89" # Name of tau_E scaling law as defined in scaling_laws.yaml
-H_fac: 1.3 # Factor by which to multiply the scaling law
-nr: 100 # number of radial grid points
+# Confinement
 #----------------------
+
+# an L-mode scaling, since the radiative scenario gives up the pedestal
+scalinglaw: "H89"
+H_fac: 1.3
+
+nr: 100           # number of radial points
 
 #----------------------
 # Profiles
-# If you specify a filename, the profiles will be read from that file and normalized.
-# Otherwise, the normalized profiles will be parabolic of the form
-# f(r) = (1 - offset)*(1 - r**alpha1)**alpha2 + offset
-# j profile comes from the equilibrium, the others come from the profs file.
+#----------------------
+
 gfilename: ""
 profsfilename: ""
 
+# f(rho) = (1 - offset) * (1 - rho^alpha1)^alpha2 + offset
 j_alpha1: 2.
 j_alpha2: 3.
 j_offset: 0.
@@ -80,18 +75,36 @@ Ti_offset: 0.005
 Te_alpha1: 2.
 Te_alpha2: 1.5
 Te_offset: 0.005
-#----------------------
-
 
 #----------------------
 # Algorithm settings
 #----------------------
-Nn: 20 # resolution of densities
-NTi: 20 # resolution of ion temperatures
-nmax_frac: 1.2 # maximum density as a fraction of the Greenwald density
-nmin_frac: 0.3 # minimum density as a fraction of the Greenwald density
-Tmax_keV: 15. # maximum volume-averaged temperature in keV
-Tmin_keV: 3 # minimum volume-averaged temperature in keV
-resistivity_model: "Jardin" # Jardin, Paz-Soldan or maximum (suggested: Jardin)
-verbosity: 1 # 0 for no output, 1 for minimal output, 2 for verbose output
+
+Nn: 20            # number of density points
+NTi: 20           # number of temperature points
+
+# n_G = Ip / (pi a^2) = 3.09e20 m^-3
+nmax_frac: 1.2
+nmin_frac: 0.3
+
+Tmax_keV: 15.
+Tmin_keV: 3
+
+resistivity_model: "Jardin"   # Jardin, Paz-Soldan, or maximum
+
+verbosity: 1
 parallel: False
+
+#----------------------
+# Scan (used by POPCON_scan; ignored by a plain POPCON)
+#----------------------
+
+# how much seeding the machine tolerates, against how good the L-mode
+# confinement has to be
+scan:
+  rows:
+    parameter: Zeff_target
+    values: [1.8, 2.1, 2.4]
+  cols:
+    parameter: H_fac
+    values: [1.1, 1.3, 1.5]

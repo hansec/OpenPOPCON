@@ -1,97 +1,106 @@
-# OpenPOPCON input file
 #-----------------------------------------------------------------------
-# Machine Paramters
+# OpenPOPCON input file: MANTA
+#
+# MANTA, a negative triangularity fusion pilot plant design. From
+# Rutherford et al., "MANTA: a negative-triangularity NASEM-compliant
+# fusion pilot plant", Plasma Phys. Control. Fusion 66 (2024) 105006,
+# doi:10.1088/1361-6587/ad6708.
+#
+# Unlike most of the examples, this one takes its geometry and current
+# profile from a gEQDSK (gMANTA) and its kinetic profiles from a file
+# (profsMANTA.csv). gfile_rescale is on, so the equilibrium is used for its
+# shape and profiles and is mapped onto the R, a and I_P given here. That
+# keeps R, a, I_P and qstar available to POPCON_scan; kappa and delta stay
+# the equilibrium's.
 #-----------------------------------------------------------------------
 
 name: "MANTA"
 
-R: 4.55 # major radius in meters
-a: 1.2 # minor radius in meters
-kappa: 1.4 # elongation
-delta: -0.448
-
 #----------------------
-# I_P and q* can be calculated from each other. Pick one to specify:
-I_P: 10. # plasma current in MA
-# or
-# qstar: 2.5
+# Machine parameters
 #----------------------
 
-#----------------------
-# B_0 and B_coil can be calculated from each other. Pick one to specify:
-B_0: 11.0 # on-axis magnetic field in Tesla
-# or
-# B_coil: 24.0 # magnetic field at the coil in Tesla
-# wall_thickness: 1.1 # wall thickness between magnet and separatrix in meters
-#----------------------
+# with gfile_rescale (below) the equilibrium is mapped onto R, a and I_P;
+# without it, it overrides them when they differ by more than 10%
+R: 4.55           # major radius, m (R_0 is accepted as an alias)
+a: 1.2            # minor radius, m
+kappa: 1.4        # elongation
+delta: -0.448     # triangularity -- negative, this is an NT device
+
+I_P: 10.          # plasma current, MA  (or give qstar instead)
+B_0: 11.0         # on-axis toroidal field, T  (or B_coil and wall_thickness)
+
+tipeak_over_tepeak: 0.9894
 
 #----------------------
-tipeak_over_tepeak: 0.9894 # ratio of ion to electron temperature at peak
-fuel: 2 # 1 for D-D, 2 for D-T, 3 for D-He3
+# Plasma composition
 #----------------------
 
-#----------------------
-# Impurity Fractions
-# In order, the fractions of:
-# 0 He ash
-# 1 Ne
-# 2 Ar
-# 3 Kr
-# 4 Xe
-# 5 W
-# Impfracs and Z_eff can be calculated from each other. If you specify
-# Z_eff, the impurity fraction for the specified impurity will be overwritten.
+fuel: 2           # 1 D-D, 2 D-T, 3 D-He3
+
+# He, Ne, Ar, Kr, Xe, W
 impurityfractions: [0.025, 0., 0., 0.00075, 0., 0.]
-Zeff_target: 2.26 # average effective charge of plasma
-impurity: 3 # 0 for He, 1 for Ne, 2 for Ar, 3 for Kr, 4 for Xe, 5 for W
-#----------------------
+
+# krypton is the Zeff carrier; the fraction above is overwritten from this
+Zeff_target: 2.26
+impurity: 3       # 0 He, 1 Ne, 2 Ar, 3 Kr, 4 Xe, 5 W
 
 #----------------------
-scalinglaw: "H98y2" # Name of tau_E scaling law as defined in scaling_laws.yaml
-H_fac: 0.79 # Factor by which to multiply the scaling law
+# Confinement
 #----------------------
+
+scalinglaw: "H98y2"
+H_fac: 0.79
+
+nr: 200           # number of radial points
 
 #----------------------
 # Profiles
-# If you specify a filename, the profiles will be read from that file and normalized.
-# Otherwise, the normalized profiles will be parabolic of the form
-# f(r) = (1 - offset)*(1 - r**alpha1)**alpha2 + offset
-# j profile comes from the equilibrium, the others come from the profs file.
+#----------------------
+
+# j comes from the equilibrium, n and T from the profiles file. Clear both
+# to fall back to parabolic profiles, set with <quantity>_alpha1, _alpha2
+# and _offset as in the other examples.
 gfilename: "gMANTA"
 profsfilename: "profsMANTA.csv"
 
-# j_alpha1: 2.
-# j_alpha2: 3.
-# j_offset: 0.
-
-# ne_alpha1: 2.
-# ne_alpha2: 1.5
-# ne_offset: 0.
-
-# ni_alpha1: 2.
-# ni_alpha2: 1.5
-# ni_offset: 0.
-
-# Ti_alpha1: 2.
-# Ti_alpha2: 1.5
-# Ti_offset: 0.
-
-# Te_alpha1: 2.
-# Te_alpha2: 1.5
-# Te_offset: 0.
-#----------------------
-
+# True keeps R, a and I_P from above and moves, resizes and re-currents the
+# equilibrium to match, keeping its shape (kappa, delta) and profiles. That
+# is what lets POPCON_scan vary R, a, I_P and qstar with a gEQDSK. False
+# takes R, a and I_P from the equilibrium whenever they differ from the
+# settings by more than 10%, and always takes the ohmic current from it
+gfile_rescale: True
 
 #----------------------
 # Algorithm settings
 #----------------------
-Nn: 50 # resolution of densities
-NTi: 50 # resolution of ion temperatures
-nr: 200 # number of radial grid points
-nmax_frac: 1.0 # maximum electron density as a fraction of the Greenwald density
-nmin_frac: 0.3 # minimum electron density as a fraction of the Greenwald density
-Tmax_keV: 11. # maximum volume-averaged temperature in keV
-Tmin_keV: 6. # minimum volume-averaged temperature in keV
-resistivity_model: "Jardin" # Jardin, Paz-Soldan or maximum (suggested: Jardin)
-verbosity: 2 # 0 for no output, 1 for minimal output, 2 for verbose output
+
+Nn: 50            # number of density points
+NTi: 50           # number of temperature points
+
+nmax_frac: 1.0
+nmin_frac: 0.3
+
+Tmax_keV: 11.
+Tmin_keV: 6.
+
+resistivity_model: "Jardin"   # Jardin, Paz-Soldan, or maximum
+
+verbosity: 1
 parallel: True
+
+#----------------------
+# Scan (used by POPCON_scan; ignored by a plain POPCON)
+#----------------------
+
+# field and confinement quality, the two machine knobs the gEQDSK leaves
+# free
+scan:
+  rows:
+    parameter: B_0
+    min: 10.
+    max: 12.
+    N: 3
+  cols:
+    parameter: H_fac
+    values: [0.7, 0.79, 0.9]
