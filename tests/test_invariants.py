@@ -67,3 +67,21 @@ def test_output_roundtrip(solved_manta, tmp_path):
             err_msg=f"roundtrip changed {field}",
         )
     plt.close("all")
+
+
+def test_parabolic_current_profile_integrates_to_ip():
+    """
+    Without a gEQDSK the current density used for the ohmic power is
+    Itot * j_prof. Its poloidal cross-section integral must be the plasma
+    current, as it already is on the gEQDSK branch (Jrms_norm).
+    """
+    from helpers import SPARC_SETTINGS, SPARC_PLOTSETTINGS
+
+    pc = op.POPCON(settingsfile=SPARC_SETTINGS, plotsettingsfile=SPARC_PLOTSETTINGS)
+    pc.settings.verbosity = 0
+    pc.run_POPCON(setuponly=True)
+    al = pc.algorithms
+    rho = al.sqrtpsin
+    J = al.state.Itot * 1e6 * al.get_profile(rho, 0)  # A/m^2
+    ip_from_j = al.volume_integral(rho, J) / (2 * np.pi * al.state.R) / 1e6  # MA
+    np.testing.assert_allclose(ip_from_j, al.state.Ip, rtol=1e-3)

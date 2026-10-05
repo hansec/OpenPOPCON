@@ -1530,6 +1530,13 @@ class POPCON_algorithms:
             self.j_prof = (1 - self.j_offset) * (
                 1 - rho**self.j_alpha1
             ) ** self.j_alpha2 + self.j_offset
+            # Scale so that the poloidal cross-section integral of Itot*j_prof
+            # is Itot (dA_pol = dV / (2 pi R)), as the gEQDSK branch already
+            # does with Jrms_norm = jrms / int jrms dA. Without this, J peaks
+            # at Ip amperes per square metre whatever the plasma size and
+            # P_OH = int eta J^2 dV is low by (int j_prof dA_pol)^-2.
+            I_shape = np.trapezoid(self.j_prof, self.volgrid) / (2 * np.pi * self.R)
+            self.j_prof = self.j_prof / I_shape
             self._jdefined = True
         if not self._nedefined:
             self.ne_prof = (1 - self.ne_offset) * (
